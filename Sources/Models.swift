@@ -531,7 +531,8 @@ final class SettingsStore: ObservableObject {
             self.translateTargetLang = decoded.translateTargetLang ?? .chinese
             self.logRetentionPeriod = decoded.logRetentionPeriod ?? .oneWeek
             self.logMaxLines = decoded.logMaxLines ?? 500
-            self.githubRepo = decoded.githubRepo ?? ""
+            let savedRepo = decoded.githubRepo?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            self.githubRepo = savedRepo.isEmpty ? "oswin-creator/LuminaAI" : savedRepo
             self.capsuleActions = Self.normalizedCapsuleActions(decoded.capsuleActions)
             for (raw, cfg) in decoded.apiConfigs {
                 if let kind = FeatureKind(rawValue: raw) {
@@ -550,7 +551,7 @@ final class SettingsStore: ObservableObject {
             self.translateTargetLang = .chinese
             self.logRetentionPeriod = .oneWeek
             self.logMaxLines = 500
-            self.githubRepo = ""
+            self.githubRepo = "oswin-creator/LuminaAI"
             self.capsuleActions = CapsuleActionConfig.defaultList
             self.apiConfigs = defaults
         }
