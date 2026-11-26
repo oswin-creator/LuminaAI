@@ -663,8 +663,8 @@ struct ReplyFloatingView: View {
                     Divider().opacity(0.25)
                 }
 
-                // Screenshot thumbnail preview (for screenshot features only; "选中原文" removed per user request)
-                if let imgData = vm.imageData, let nsImage = NSImage(data: imgData) {
+                // Screenshot thumbnail preview ONLY for AI Ask (hidden for OCR and Screenshot Translate)
+                if vm.feature == .screenshotAsk, let imgData = vm.imageData, let nsImage = NSImage(data: imgData) {
                     HStack(spacing: 10) {
                         Image(nsImage: nsImage)
                             .resizable()

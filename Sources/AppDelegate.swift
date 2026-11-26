@@ -10,12 +10,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppLogger.shared.info("LuminaAI launched")
 
+        setupStandardMainMenu()
         applyPresenceSettings()
         setupNotifications()
         setupMonitorsAndHotkeys()
         showMainWindow()
 
         PermissionManager.shared.checkOnLaunchAndPromptIfNeeded()
+    }
+
+    /// Registers standard macOS App & Edit menus so Cmd+V / Cmd+C / Cmd+X / Cmd+A / Cmd+Z work in all TextFields & SecureFields
+    private func setupStandardMainMenu() {
+        let mainMenu = NSMenu()
+
+        // App Menu
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu(title: "LuminaAI")
+        appMenu.addItem(withTitle: "隐藏 LuminaAI", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "退出 LuminaAI", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        // Edit Menu (enables Cmd+C/V/X/A/Z across all inputs)
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "编辑")
+        editMenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(NSMenuItem.separator())
+        editMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "拷贝", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
+        NSApp.mainMenu = mainMenu
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

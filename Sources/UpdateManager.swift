@@ -1,11 +1,20 @@
 import Foundation
 import AppKit
 
+struct ReleaseItem: Identifiable, Equatable {
+    var id: String { version }
+    let version: String
+    let title: String
+    let publishedDate: String
+    let notes: String
+    let downloadURL: URL
+}
+
 enum UpdateStatus: Equatable {
     case idle
     case checking
-    case upToDate
-    case available(version: String, notes: String, downloadURL: URL)
+    case upToDate(recentReleases: [ReleaseItem])
+    case available(latest: ReleaseItem, pendingReleases: [ReleaseItem])
     case downloading
     case installing
     case error(String)
@@ -14,31 +23,24 @@ enum UpdateStatus: Equatable {
 final class UpdateManager: ObservableObject {
     static let shared = UpdateManager()
 
+    /// Built-in GitHub repository (zero manual configuration required)
+    static let githubRepo = "oswin-creator/LuminaAI"
+    static let localSignerName = "LuminaAI Local Signer"
+
     @Published var status: UpdateStatus = .idle
     @Published var showUpdateSheet: Bool = false
 
-    static let localSignerName = "LuminaAI Local Signer"
-
     var currentVersion: String {
-        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.1.0"
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.1.1"
     }
 
     private init() {}
 
     func checkForUpdates(silent: Bool = false) {
-        let repo = SettingsStore.shared.githubRepo.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !repo.isEmpty, repo.contains("/") else {
-            if !silent {
-                status = .error("请先在「外观权限」中填写 GitHub 仓库地址（格式：用户名/仓库名）")
-                showUpdateSheet = true
-            }
-            return
-        }
-
         status = .checking
-        let urlString = "https://api.github.com/repos/\(repo)/releases/latest"
+        let urlString = "https://api.github.com/repos/\(Self.githubRepo)/releases?per_page=10"
         guard let url = URL(string: urlString) else {
-            status = .error("无效的 GitHub 仓库地址")
+            status = .error("更新地址无效")
             return
         }
 
@@ -55,7 +57,7 @@ final class UpdateManager: ObservableObject {
                 }
                 if http.statusCode == 404 {
                     await MainActor.run {
-                        self.status = .upToDate
+                        self.status = .upToDate(recentReleases: [])
                         if !silent {
                             ToastHUD.shared.show("当前已是最新版本 (v\(self.currentVersion))")
                         }
@@ -63,34 +65,53 @@ final class UpdateManager: ObservableObject {
                     return
                 }
                 guard (200...299).contains(http.statusCode),
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let tagName = json["tag_name"] as? String else {
+                      let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
                     throw NSError(domain: "Update", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "检查更新失败 (HTTP \(http.statusCode))"])
                 }
 
-                let remoteVer = tagName.trimmingCharacters(in: CharacterSet(charactersIn: "vV "))
-                let notes = (json["body"] as? String) ?? "优化体验与问题修复。"
-                let assets = (json["assets"] as? [[String: Any]]) ?? []
-                let zipAsset = assets.first(where: { ($0["name"] as? String)?.hasSuffix(".zip") == true })
-                let dlString = (zipAsset?["browser_download_url"] as? String)
-                    ?? (json["html_url"] as? String)
-                    ?? "https://github.com/\(repo)/releases/latest"
+                var parsed: [ReleaseItem] = []
+                for item in list {
+                    if (item["draft"] as? Bool) == true { continue }
+                    guard let tagName = item["tag_name"] as? String else { continue }
+                    let ver = tagName.trimmingCharacters(in: CharacterSet(charactersIn: "vV "))
+                    let title = (item["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let rawDate = (item["published_at"] as? String) ?? ""
+                    let shortDate = rawDate.count >= 10 ? String(rawDate.prefix(10)) : ""
+                    let body = ((item["body"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    let notes = body.isEmpty ? "体验优化与问题修复。" : body
+                    let assets = (item["assets"] as? [[String: Any]]) ?? []
+                    let zipAsset = assets.first(where: { ($0["name"] as? String)?.hasSuffix(".zip") == true })
+                    let dlString = (zipAsset?["browser_download_url"] as? String)
+                        ?? (item["html_url"] as? String)
+                        ?? "https://github.com/\(Self.githubRepo)/releases/latest"
+                    if let dlURL = URL(string: dlString) {
+                        parsed.append(ReleaseItem(
+                            version: ver,
+                            title: (title?.isEmpty == false) ? title! : "v\(ver)",
+                            publishedDate: shortDate,
+                            notes: notes,
+                            downloadURL: dlURL
+                        ))
+                    }
+                }
+
+                let newerReleases = parsed.filter { Self.isVersion($0.version, newerThan: self.currentVersion) }
 
                 await MainActor.run {
-                    if Self.isVersion(remoteVer, newerThan: self.currentVersion), let dlURL = URL(string: dlString) {
-                        self.status = .available(version: remoteVer, notes: notes, downloadURL: dlURL)
+                    if let latest = newerReleases.first {
+                        self.status = .available(latest: latest, pendingReleases: newerReleases)
                         self.showUpdateSheet = true
                     } else {
-                        self.status = .upToDate
+                        self.status = .upToDate(recentReleases: Array(parsed.prefix(5)))
                         if !silent {
-                            ToastHUD.shared.show("当前已是最新版本 (v\(self.currentVersion))")
+                            self.showUpdateSheet = true
                         }
                     }
                 }
             } catch {
                 AppLogger.shared.error("Update check failed: \(error.localizedDescription)")
                 await MainActor.run {
-                    self.status = .error(error.localizedDescription)
+                    self.status = .error("检查更新失败：\(error.localizedDescription)")
                     if !silent {
                         self.showUpdateSheet = true
                     }
@@ -119,7 +140,6 @@ final class UpdateManager: ObservableObject {
                 try unzip.run()
                 unzip.waitUntilExit()
 
-                // Locate extracted LuminaAI.app
                 let contents = try FileManager.default.contentsOfDirectory(at: workDir, includingPropertiesForKeys: nil)
                 guard let newAppURL = contents.first(where: { $0.pathExtension == "app" }) else {
                     throw NSError(domain: "Update", code: -2, userInfo: [NSLocalizedDescriptionKey: "更新包中未找到 .app 文件"])
@@ -127,7 +147,7 @@ final class UpdateManager: ObservableObject {
 
                 await MainActor.run { self.status = .installing }
 
-                // Re-sign downloaded app with the user's local persistent certificate so macOS TCC permissions stay intact!
+                // Re-sign with persistent local certificate so macOS keeps Accessibility & Screen Recording permissions!
                 Self.resignWithLocalCertificateIfAvailable(appURL: newAppURL)
 
                 let currentAppPath = Bundle.main.bundlePath

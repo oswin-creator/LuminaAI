@@ -1296,22 +1296,25 @@ struct MainDashboardView: View {
 
                 Divider().opacity(0.25)
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("GitHub 自动更新仓库（格式：用户名/仓库名）")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(LuminaTheme.textPrimary)
-                    HStack(spacing: 8) {
-                        TextField("例如：yourname/LuminaAI", text: $settings.githubRepo)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 12.5))
-                        Button("检查更新") {
-                            updater.checkForUpdates(silent: false)
-                        }
-                        .buttonStyle(.bordered)
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("软件版本与自动更新（当前 v\(updater.currentVersion)）")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(LuminaTheme.textPrimary)
+                        Text("已自动关联官方 GitHub 仓库，一键下载后自动使用本机证书重签，无需重新授权权限。")
+                            .font(.system(size: 11))
+                            .foregroundColor(LuminaTheme.textSecondary)
                     }
-                    Text("自动更新下载新版后会自动使用本机持久化签名证书重签，保留辅助功能与屏幕录制授权，无需重新授权。")
-                        .font(.system(size: 11))
-                        .foregroundColor(LuminaTheme.textSecondary)
+                    Spacer()
+                    Button(action: { updater.checkForUpdates(silent: false) }) {
+                        Text("立即检查更新")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(Capsule().fill(LuminaTheme.activeTileGradient))
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .bentoCard()
@@ -1517,26 +1520,31 @@ struct MainDashboardView: View {
                 }
 
                 switch updater.status {
-                case .available(let ver, let notes, let url):
-                    Text("发现新版本 v\(ver)（当前 v\(updater.currentVersion)）")
-                        .font(.system(size: 13.5, weight: .semibold))
-                        .foregroundColor(LuminaTheme.emerald)
-                    ScrollView {
-                        Text(notes)
-                            .font(.system(size: 12.5))
-                            .foregroundColor(LuminaTheme.textPrimary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                case .available(let latest, let pendingReleases):
+                    HStack(spacing: 8) {
+                        Text("发现新版本 v\(latest.version)")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(LuminaTheme.emerald)
+                        Text("（当前 v\(updater.currentVersion)，共跨越 \(pendingReleases.count) 个版本）")
+                            .font(.system(size: 12))
+                            .foregroundColor(LuminaTheme.textSecondary)
                     }
-                    .frame(height: 110)
-                    .padding(10)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.85)))
+
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(pendingReleases) { rel in
+                                releaseCardRow(rel)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 220)
 
                     HStack {
                         Spacer()
                         Button("稍后") { updater.showUpdateSheet = false }
                             .buttonStyle(.bordered)
-                        Button(action: { updater.downloadAndInstall(from: url) }) {
-                            Text("立即更新并重启（免重新授权）")
+                        Button(action: { updater.downloadAndInstall(from: latest.downloadURL) }) {
+                            Text("一键更新至 v\(latest.version) 并重启")
                                 .font(.system(size: 12.5, weight: .medium))
                                 .foregroundColor(.white)
                                 .padding(.horizontal, 16)
@@ -1544,6 +1552,29 @@ struct MainDashboardView: View {
                                 .background(Capsule().fill(LuminaTheme.activeTileGradient))
                         }
                         .buttonStyle(.plain)
+                    }
+
+                case .upToDate(let recentReleases):
+                    Text("当前已是最新版本 v\(updater.currentVersion)")
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundColor(LuminaTheme.emerald)
+                    if !recentReleases.isEmpty {
+                        Text("最近版本更新说明：")
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundColor(LuminaTheme.textSecondary)
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 10) {
+                                ForEach(recentReleases) { rel in
+                                    releaseCardRow(rel)
+                                }
+                            }
+                        }
+                        .frame(maxHeight: 190)
+                    }
+                    HStack {
+                        Spacer()
+                        Button("好的") { updater.showUpdateSheet = false }
+                            .buttonStyle(.bordered)
                     }
 
                 case .downloading:
@@ -1568,24 +1599,65 @@ struct MainDashboardView: View {
                         .foregroundColor(LuminaTheme.coral)
                     HStack {
                         Spacer()
+                        Button("重试") { updater.checkForUpdates(silent: false) }
+                            .buttonStyle(.bordered)
                         Button("关闭") { updater.showUpdateSheet = false }
                             .buttonStyle(.bordered)
                     }
 
                 default:
-                    Text("当前已是最新版本 v\(updater.currentVersion)。")
-                        .font(.system(size: 13))
-                        .foregroundColor(LuminaTheme.textSecondary)
+                    HStack(spacing: 10) {
+                        ProgressView().scaleEffect(0.75)
+                        Text("正在检查更新...")
+                            .font(.system(size: 13))
+                    }
+                    .padding(.vertical, 14)
                 }
             }
             .padding(22)
-            .frame(width: 460)
+            .frame(width: 500)
             .background(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .fill(LuminaTheme.cardBg)
                     .shadow(color: Color.black.opacity(0.24), radius: 24, x: 0, y: 12)
             )
         }
+    }
+
+    private func releaseCardRow(_ rel: ReleaseItem) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("v\(rel.version)")
+                    .font(.system(size: 12.5, weight: .bold, design: .monospaced))
+                    .foregroundColor(LuminaTheme.textPrimary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.black.opacity(0.06)))
+                if rel.title != "v\(rel.version)" {
+                    Text(rel.title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(LuminaTheme.textPrimary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                if !rel.publishedDate.isEmpty {
+                    Text(rel.publishedDate)
+                        .font(.system(size: 11))
+                        .foregroundColor(LuminaTheme.textSecondary)
+                }
+            }
+            Text(rel.notes)
+                .font(.system(size: 12))
+                .foregroundColor(LuminaTheme.textPrimary.opacity(0.85))
+                .lineSpacing(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(11)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.88))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.black.opacity(0.06), lineWidth: 1))
+        )
     }
 
     // MARK: - Permission Guide Modal Overlay
