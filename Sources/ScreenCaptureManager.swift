@@ -327,10 +327,16 @@ final class ScreenCaptureManager {
 
     func dismissOverlay() {
         toolbarWindow?.orderOut(nil)
+        toolbarWindow?.contentView = nil
         toolbarWindow = nil
+        if let canvas = overlayWindow?.contentView as? CaptureCanvasView {
+            canvas.stopAnimations()
+        }
         overlayWindow?.orderOut(nil)
+        overlayWindow?.contentView = nil
         overlayWindow = nil
         capturedFullImage = nil
+        activeScreen = nil
         NSCursor.arrow.set()
     }
 }
@@ -387,8 +393,13 @@ final class CaptureCanvasView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     deinit {
-        animTimer?.invalidate()
+        stopAnimations()
         NSCursor.arrow.set()
+    }
+
+    func stopAnimations() {
+        animTimer?.invalidate()
+        animTimer = nil
     }
 
     /// Clean, refined small black crosshair (+) with crisp 1px white outline so it reads on any background

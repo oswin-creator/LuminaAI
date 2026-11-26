@@ -31,6 +31,12 @@ final class UsageStore: ObservableObject {
 
     private let storeURL: URL
     private let calendar = Calendar.current
+    private static let dayFormatter: DateFormatter = {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "zh_CN")
+        df.dateFormat = "M/d"
+        return df
+    }()
 
     private init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -107,10 +113,7 @@ final class UsageStore: ObservableObject {
     }
 
     func dayLabel(for date: Date) -> String {
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "zh_CN")
-        df.dateFormat = "M/d"
-        return df.string(from: date)
+        Self.dayFormatter.string(from: date)
     }
 
     func recordsInLast7Days() -> [UsageRecord] {

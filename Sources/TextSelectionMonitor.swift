@@ -8,7 +8,6 @@ final class TextSelectionMonitor {
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
     private var mouseDownLocation: NSPoint?
-    private var isDragging = false
     private var lastTriggerTime: Date = .distantPast
 
     var onTextSelected: ((String, NSPoint) -> Void)?
@@ -18,7 +17,8 @@ final class TextSelectionMonitor {
 
     func start() {
         stop()
-        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .rightMouseDown]
+        // Intentionally omit .leftMouseDragged to avoid 60-120Hz background wakeups while dragging in other apps!
+        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .leftMouseUp, .rightMouseDown]
         globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
             self?.handleGlobalMouseEvent(event)
         }
@@ -26,7 +26,7 @@ final class TextSelectionMonitor {
             self?.handleLocalMouseDown(event)
             return event
         }
-        AppLogger.shared.info("TextSelectionMonitor started")
+        AppLogger.shared.info("TextSelectionMonitor started (low-power mode)")
     }
 
     func stop() {
@@ -53,27 +53,21 @@ final class TextSelectionMonitor {
         switch event.type {
         case .leftMouseDown:
             mouseDownLocation = NSEvent.mouseLocation
-            isDragging = false
-            // Dismiss existing capsule if clicking elsewhere
             onDismissRequested?()
 
         case .rightMouseDown:
             onDismissRequested?()
 
-        case .leftMouseDragged:
-            if let start = mouseDownLocation {
-                let current = NSEvent.mouseLocation
-                let dist = hypot(current.x - start.x, current.y - start.y)
-                if dist > 8 {
-                    isDragging = true
-                }
-            }
-
         case .leftMouseUp:
             let mouseLoc = NSEvent.mouseLocation
-            let shouldCheck = isDragging || event.clickCount >= 2
+            let dragDist: CGFloat
+            if let start = mouseDownLocation {
+                dragDist = hypot(mouseLoc.x - start.x, mouseLoc.y - start.y)
+            } else {
+                dragDist = 0
+            }
+            let shouldCheck = (dragDist > 8) || (event.clickCount >= 2)
             mouseDownLocation = nil
-            isDragging = false
 
             guard shouldCheck else { return }
             guard Date().timeIntervalSince(lastTriggerTime) > 0.25 else { return }

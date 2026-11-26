@@ -227,8 +227,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        // Keep running in menu bar / background when user closes main window
+        // Release SwiftUI dashboard view hierarchy & GPU backing store while running silently in background
         sender.orderOut(nil)
+        sender.contentView = nil
+        mainWindow = nil
         return false
     }
 }

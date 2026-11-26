@@ -296,6 +296,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     func dismissSelectionCapsule() {
         capsulePanel?.orderOut(nil)
+        capsulePanel?.contentView = nil
         capsulePanel = nil
     }
 
@@ -443,7 +444,9 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         removeOutsideClickMonitors()
         replyVM?.stopStreaming()
         replyPanel?.orderOut(nil)
+        replyPanel?.contentView = nil
         replyPanel = nil
+        replyVM = nil
     }
 }
 
