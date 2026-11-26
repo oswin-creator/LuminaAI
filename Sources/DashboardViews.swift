@@ -35,8 +35,16 @@ final class DashboardViewModel: ObservableObject {
     @Published var visibleFeatures: Set<FeatureKind> = Set(FeatureKind.allCases)
 
     // API Config Editor State
-    @Published var editingFeature: FeatureKind = .translate
+    @Published var editingFeature: FeatureKind = .translate {
+        didSet {
+            testResultSuccess = nil
+            testResultMessage = ""
+        }
+    }
     @Published var showAPIKeyPlaintext: Bool = false
+    @Published var isTestingConnection: Bool = false
+    @Published var testResultSuccess: Bool? = nil
+    @Published var testResultMessage: String = ""
     @Published var copyIncludeModel: Bool = true
     @Published var copyIncludePricing: Bool = true
     @Published var copyIncludeThinking: Bool = true
@@ -81,6 +89,28 @@ final class DashboardViewModel: ObservableObject {
             currency: pricingCurrency
         )
         ToastHUD.shared.show("已更新「\(pricingFeature.shortName)」单价并重算费用")
+    }
+
+    func runConnectionTest() {
+        guard !isTestingConnection else { return }
+        isTestingConnection = true
+        testResultSuccess = nil
+        testResultMessage = "正在测试「\(editingFeature.displayName)」连通性..."
+        let targetFeature = editingFeature
+
+        AIClient.shared.testConnection(for: targetFeature) { [weak self] result in
+            guard let self = self, self.editingFeature == targetFeature else { return }
+            self.isTestingConnection = false
+            switch result {
+            case .success(let info):
+                self.testResultSuccess = true
+                let modeHint = targetFeature.isVisionCapable ? "多模态视觉验证通过" : "文本接口验证通过"
+                self.testResultMessage = "连接成功（\(info.latencyMs) ms · \(modeHint)）· 回复：\(info.replyPreview)"
+            case .failure(let error):
+                self.testResultSuccess = false
+                self.testResultMessage = "\(error.localizedDescription)（详细报错已写入日志）"
+            }
+        }
     }
 
     func toggleFeatureInChart(_ feature: FeatureKind) {
@@ -812,19 +842,26 @@ struct MainDashboardView: View {
 
             // Main API Form Card
             VStack(alignment: .leading, spacing: 14) {
-                HStack {
+                HStack(spacing: 8) {
                     Text("\(vm.editingFeature.displayName) — 接口配置")
                         .font(.system(size: 16, weight: .semibold, design: .serif))
                         .foregroundColor(LuminaTheme.textPrimary)
                     Spacer()
 
                     // Quick provider presets
-                    HStack(spacing: 6) {
+                    HStack(spacing: 5) {
                         presetChip("火山方舟/豆包") {
                             var cfg = settings.config(for: vm.editingFeature)
                             cfg.providerName = "火山方舟 · 豆包"
                             cfg.baseURL = "https://ark.cn-beijing.volces.com/api/v3"
                             cfg.modelName = vm.editingFeature.isVisionCapable ? "doubao-1-5-vision-pro-32k-250115" : "doubao-1-5-pro-32k-250115"
+                            settings.updateConfig(cfg)
+                        }
+                        presetChip("硅基流动") {
+                            var cfg = settings.config(for: vm.editingFeature)
+                            cfg.providerName = "硅基流动"
+                            cfg.baseURL = "https://api.siliconflow.cn/v1"
+                            cfg.modelName = vm.editingFeature.isVisionCapable ? "Qwen/Qwen2.5-VL-7B-Instruct" : "Qwen/Qwen2.5-7B-Instruct"
                             settings.updateConfig(cfg)
                         }
                         presetChip("OpenAI") {
@@ -842,6 +879,47 @@ struct MainDashboardView: View {
                             settings.updateConfig(cfg)
                         }
                     }
+
+                    // One-click connectivity test button
+                    Button(action: { vm.runConnectionTest() }) {
+                        HStack(spacing: 5) {
+                            if vm.isTestingConnection {
+                                ProgressView().scaleEffect(0.55).frame(width: 12, height: 12)
+                            } else {
+                                Image(systemName: "bolt.horizontal.circle")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            Text(vm.isTestingConnection ? "测试中..." : "测试连通性")
+                                .font(.system(size: 11.5, weight: .medium))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(LuminaTheme.activeTileGradient))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.isTestingConnection)
+                }
+
+                // Inline connection test result banner
+                if !vm.testResultMessage.isEmpty {
+                    let isOK = (vm.testResultSuccess == true)
+                    let isPending = (vm.testResultSuccess == nil)
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: isPending ? "hourglass" : (isOK ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"))
+                            .font(.system(size: 13))
+                            .foregroundColor(isPending ? LuminaTheme.textSecondary : (isOK ? LuminaTheme.emerald : LuminaTheme.coral))
+                        Text(vm.testResultMessage)
+                            .font(.system(size: 12))
+                            .foregroundColor(isPending ? LuminaTheme.textSecondary : (isOK ? Color(hex: "#1E6F36") : Color(hex: "#A82A27")))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(isPending ? Color.black.opacity(0.04) : (isOK ? LuminaTheme.emerald.opacity(0.10) : LuminaTheme.coral.opacity(0.10)))
+                    )
                 }
 
                 HStack(spacing: 14) {
