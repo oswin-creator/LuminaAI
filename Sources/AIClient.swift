@@ -96,22 +96,14 @@ final class AIClient {
             ]
 
             let lowerURL = trimmedBase.lowercased()
-            let isArkEndpoint = lowerURL.contains("volces.com") || lowerURL.contains("ark")
-            let isSiliconFlow = lowerURL.contains("siliconflow")
-            if config.enableThinking {
-                body["reasoning_effort"] = config.thinkingEffort.rawValue
-                if isArkEndpoint {
-                    body["thinking"] = ["type": "enabled"]
-                } else if isSiliconFlow {
-                    body["enable_thinking"] = true
-                }
-            } else {
-                if isArkEndpoint {
-                    body["thinking"] = ["type": "disabled"]
-                } else if isSiliconFlow {
-                    body["enable_thinking"] = false
-                }
-            }
+            let lowerModel = config.modelName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            Self.applyThinkingParameters(
+                to: &body,
+                enableThinking: config.enableThinking,
+                effort: config.thinkingEffort,
+                lowerURL: lowerURL,
+                lowerModel: lowerModel
+            )
 
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
@@ -268,17 +260,20 @@ final class AIClient {
             }
 
             let lowerURL = trimmedBase.lowercased()
+            let lowerModel = config.modelName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             var body: [String: Any] = [
                 "model": config.modelName.trimmingCharacters(in: .whitespacesAndNewlines),
                 "messages": [userMessage],
                 "max_tokens": 16,
                 "stream": false
             ]
-            if lowerURL.contains("siliconflow") {
-                body["enable_thinking"] = false
-            } else if lowerURL.contains("volces.com") || lowerURL.contains("ark") {
-                body["thinking"] = ["type": "disabled"]
-            }
+            Self.applyThinkingParameters(
+                to: &body,
+                enableThinking: false,
+                effort: .low,
+                lowerURL: lowerURL,
+                lowerModel: lowerModel
+            )
 
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
@@ -319,6 +314,52 @@ final class AIClient {
                 let latency = Int(Date().timeIntervalSince(startTime) * 1000)
                 AppLogger.shared.error("Connection test FAILED [\(feature.displayName) / \(config.modelName)] (\(latency)ms): \(error.localizedDescription)")
                 await MainActor.run { completion(.failure(error)) }
+            }
+        }
+    }
+
+    /// Applies provider- and model-aware thinking/reasoning flags across all 7 features (works on official endpoints AND third-party relays like PackCode/NewAPI/OneAPI)
+    private static func applyThinkingParameters(
+        to body: inout [String: Any],
+        enableThinking: Bool,
+        effort: ThinkingEffort,
+        lowerURL: String,
+        lowerModel: String
+    ) {
+        let isOfficialOpenAI = lowerURL.contains("api.openai.com")
+        let isOfficialDeepSeek = lowerURL.contains("api.deepseek.com")
+
+        let usesEnableThinkingBool = lowerURL.contains("siliconflow")
+            || lowerURL.contains("dashscope")
+            || lowerModel.contains("qwen")
+            || lowerModel.contains("qwq")
+            || lowerModel.contains("kimi")
+
+        let usesThinkingDict = lowerURL.contains("volces.com")
+            || lowerURL.contains("ark")
+            || lowerModel.contains("doubao")
+            || lowerModel.contains("glm")
+            || lowerModel.contains("claude")
+
+        let isGemini = lowerModel.contains("gemini")
+
+        if enableThinking {
+            body["reasoning_effort"] = effort.rawValue
+            if usesEnableThinkingBool {
+                body["enable_thinking"] = true
+            }
+            if usesThinkingDict {
+                body["thinking"] = ["type": "enabled"]
+            }
+        } else {
+            if usesEnableThinkingBool {
+                body["enable_thinking"] = false
+            }
+            if usesThinkingDict {
+                body["thinking"] = ["type": "disabled"]
+            }
+            if isGemini && !isOfficialOpenAI && !isOfficialDeepSeek {
+                body["reasoning_effort"] = "none"
             }
         }
     }
