@@ -231,8 +231,18 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     func showSelectionCapsule(for text: String, near mousePoint: NSPoint) {
         dismissSelectionCapsule()
 
-        let capsuleView = SelectionCapsuleView { [weak self] feature in
+        let actions = SettingsStore.shared.enabledCapsuleActions
+        let capsuleView = SelectionCapsuleView(actions: actions) { [weak self] item in
             self?.dismissSelectionCapsule()
+
+            if item == .copy {
+                TextSelectionMonitor.shared.performSmartCopy(fallbackText: text) { usedForceCopy in
+                    ToastHUD.shared.show(usedForceCopy ? "已强力复制文字到剪贴板" : "已复制文字到剪贴板")
+                }
+                return
+            }
+
+            guard let feature = item.featureKind else { return }
             let autoSend = (feature != .followUp)
             let prompt: String?
             switch feature {
@@ -256,8 +266,8 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         hosting.wantsLayer = true
         hosting.layer?.backgroundColor = NSColor.clear.cgColor
         let fitSize = hosting.fittingSize
-        let width = max(fitSize.width, 326)
-        let height = max(fitSize.height, 70)
+        let width = max(fitSize.width, 140)
+        let height = max(fitSize.height, 68)
 
         let screen = NSScreen.screens.first(where: { NSMouseInRect(mousePoint, $0.frame, false) }) ?? NSScreen.main
         let bounds = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -470,12 +480,11 @@ final class KeyableFloatingPanel: NSPanel {
     }
 }
 
-// MARK: - Selection Capsule View (Clean Shadow Margin, Zero Rectangular Corners)
+// MARK: - Selection Capsule View (Configurable Actions & Order)
 
 struct SelectionCapsuleView: View {
-    let onSelect: (FeatureKind) -> Void
-
-    private let actions: [FeatureKind] = [.translate, .explain, .summarize, .followUp]
+    let actions: [CapsuleActionItem]
+    let onSelect: (CapsuleActionItem) -> Void
 
     var body: some View {
         HStack(spacing: 4) {
@@ -489,12 +498,12 @@ struct SelectionCapsuleView: View {
                 )
                 .padding(.trailing, 2)
 
-            ForEach(actions) { kind in
-                Button(action: { onSelect(kind) }) {
+            ForEach(actions) { item in
+                Button(action: { onSelect(item) }) {
                     HStack(spacing: 4) {
-                        Image(systemName: kind.symbolName)
+                        Image(systemName: item.symbolName)
                             .font(.system(size: 11, weight: .medium))
-                        Text(kind.shortName)
+                        Text(item.shortName)
                             .font(.system(size: 12.5, weight: .medium))
                             .fixedSize(horizontal: true, vertical: false)
                     }

@@ -1076,6 +1076,119 @@ struct MainDashboardView: View {
                 }
             }
             .bentoCard()
+
+            // Capsule Items Order & Visibility Customization Card
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("划词胶囊选项自定义（显示与排序）")
+                            .font(.system(size: 16, weight: .semibold, design: .serif))
+                            .foregroundColor(LuminaTheme.textPrimary)
+                        Text("自由勾选需要放入悬浮胶囊的功能，并使用上下箭头调整显示顺序。")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(LuminaTheme.textSecondary)
+                    }
+                    Spacer()
+                    Button("恢复默认") {
+                        settings.resetCapsuleActions()
+                        ToastHUD.shared.show("已恢复默认胶囊顺序")
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                // Live Capsule Preview
+                HStack {
+                    Text("实时预览：")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundColor(LuminaTheme.textSecondary)
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(LuminaTheme.activeTileGradient)
+                            .frame(width: 22, height: 22)
+                            .overlay(
+                                Image(systemName: "sparkle")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(LuminaTheme.champagneLight)
+                            )
+                        ForEach(settings.enabledCapsuleActions) { item in
+                            HStack(spacing: 4) {
+                                Image(systemName: item.symbolName)
+                                    .font(.system(size: 10.5))
+                                Text(item.shortName)
+                                    .font(.system(size: 11.5, weight: .medium))
+                            }
+                            .foregroundColor(LuminaTheme.textPrimary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill(Color.black.opacity(0.05)))
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(Color.white)
+                            .shadow(color: Color.black.opacity(0.10), radius: 8, x: 0, y: 3)
+                    )
+                    Spacer()
+                }
+                .padding(.vertical, 4)
+
+                // Reorderable Toggle Rows
+                VStack(spacing: 8) {
+                    ForEach(Array(settings.capsuleActions.enumerated()), id: \.element.id) { idx, item in
+                        HStack(spacing: 12) {
+                            Toggle("", isOn: Binding(
+                                get: { item.isEnabled },
+                                set: { settings.toggleCapsuleAction(item.action, enabled: $0) }
+                            ))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+
+                            Image(systemName: item.action.symbolName)
+                                .font(.system(size: 13))
+                                .foregroundColor(item.isEnabled ? LuminaTheme.textPrimary : LuminaTheme.textTertiary)
+                                .frame(width: 20)
+
+                            Text(item.action.displayName)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(item.isEnabled ? LuminaTheme.textPrimary : LuminaTheme.textSecondary)
+
+                            Spacer()
+
+                            HStack(spacing: 4) {
+                                Button(action: { settings.moveCapsuleAction(at: idx, offset: -1) }) {
+                                    Image(systemName: "chevron.up")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(idx == 0 ? LuminaTheme.textTertiary : LuminaTheme.textPrimary)
+                                        .frame(width: 26, height: 24)
+                                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.05)))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(idx == 0)
+
+                                Button(action: { settings.moveCapsuleAction(at: idx, offset: 1) }) {
+                                    Image(systemName: "chevron.down")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(idx == settings.capsuleActions.count - 1 ? LuminaTheme.textTertiary : LuminaTheme.textPrimary)
+                                        .frame(width: 26, height: 24)
+                                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.05)))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(idx == settings.capsuleActions.count - 1)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 11)
+                                .fill(Color.white.opacity(0.75))
+                                .overlay(RoundedRectangle(cornerRadius: 11).stroke(Color.black.opacity(0.05), lineWidth: 1))
+                        )
+                    }
+                }
+            }
+            .bentoCard()
         }
     }
 

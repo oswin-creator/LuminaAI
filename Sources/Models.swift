@@ -92,6 +92,74 @@ enum FeatureKind: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+// MARK: - Selection Capsule Action Item
+
+enum CapsuleActionItem: String, CaseIterable, Codable, Identifiable {
+    case copy = "copy"
+    case translate = "translate"
+    case explain = "explain"
+    case summarize = "summarize"
+    case followUp = "followUp"
+
+    var id: String { rawValue }
+
+    var shortName: String {
+        switch self {
+        case .copy: return "复制"
+        case .translate: return "翻译"
+        case .explain: return "解释"
+        case .summarize: return "总结"
+        case .followUp: return "追问"
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .copy: return "复制（支持网页强力复制）"
+        case .translate: return "划词翻译"
+        case .explain: return "划词解释"
+        case .summarize: return "划词总结"
+        case .followUp: return "划词追问"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .copy: return "doc.on.doc"
+        case .translate: return "character.book.closed"
+        case .explain: return "lightbulb"
+        case .summarize: return "text.alignleft"
+        case .followUp: return "bubble.left.and.bubble.right"
+        }
+    }
+
+    var featureKind: FeatureKind? {
+        switch self {
+        case .copy: return nil
+        case .translate: return .translate
+        case .explain: return .explain
+        case .summarize: return .summarize
+        case .followUp: return .followUp
+        }
+    }
+}
+
+struct CapsuleActionConfig: Codable, Equatable, Identifiable {
+    var id: String { action.rawValue }
+    var action: CapsuleActionItem
+    var isEnabled: Bool
+
+    static var defaultList: [CapsuleActionConfig] {
+        [
+            CapsuleActionConfig(action: .copy, isEnabled: true),
+            CapsuleActionConfig(action: .translate, isEnabled: true),
+            CapsuleActionConfig(action: .explain, isEnabled: true),
+            CapsuleActionConfig(action: .summarize, isEnabled: true),
+            CapsuleActionConfig(action: .followUp, isEnabled: true)
+        ]
+    }
+}
+
 // MARK: - Log Retention Period
 
 enum LogRetentionPeriod: String, CaseIterable, Codable, Identifiable {
@@ -413,6 +481,9 @@ final class SettingsStore: ObservableObject {
     @Published var githubRepo: String {
         didSet { save() }
     }
+    @Published var capsuleActions: [CapsuleActionConfig] {
+        didSet { save() }
+    }
     @Published var apiConfigs: [FeatureKind: APIEndpointConfig] {
         didSet { save() }
     }
@@ -431,6 +502,7 @@ final class SettingsStore: ObservableObject {
         var logRetentionPeriod: LogRetentionPeriod?
         var logMaxLines: Int?
         var githubRepo: String?
+        var capsuleActions: [CapsuleActionConfig]?
         var apiConfigs: [String: APIEndpointConfig]
     }
 
@@ -458,6 +530,7 @@ final class SettingsStore: ObservableObject {
             self.logRetentionPeriod = decoded.logRetentionPeriod ?? .oneWeek
             self.logMaxLines = decoded.logMaxLines ?? 500
             self.githubRepo = decoded.githubRepo ?? ""
+            self.capsuleActions = Self.normalizedCapsuleActions(decoded.capsuleActions)
             for (raw, cfg) in decoded.apiConfigs {
                 if let kind = FeatureKind(rawValue: raw) {
                     defaults[kind] = cfg
@@ -476,6 +549,7 @@ final class SettingsStore: ObservableObject {
             self.logRetentionPeriod = .oneWeek
             self.logMaxLines = 500
             self.githubRepo = ""
+            self.capsuleActions = CapsuleActionConfig.defaultList
             self.apiConfigs = defaults
         }
     }
@@ -535,6 +609,46 @@ final class SettingsStore: ObservableObject {
         apiConfigs[feature] = cfg
     }
 
+    var enabledCapsuleActions: [CapsuleActionItem] {
+        let enabled = capsuleActions.filter(\.isEnabled).map(\.action)
+        return enabled.isEmpty ? [.copy] : enabled
+    }
+
+    func toggleCapsuleAction(_ action: CapsuleActionItem, enabled: Bool) {
+        var list = capsuleActions
+        guard let idx = list.firstIndex(where: { $0.action == action }) else { return }
+        if !enabled && list.filter(\.isEnabled).count <= 1 {
+            ToastHUD.shared.show("胶囊中至少需要保留 1 个功能")
+            return
+        }
+        list[idx].isEnabled = enabled
+        capsuleActions = list
+    }
+
+    func moveCapsuleAction(at index: Int, offset: Int) {
+        let target = index + offset
+        guard index >= 0, index < capsuleActions.count, target >= 0, target < capsuleActions.count else { return }
+        var list = capsuleActions
+        let item = list.remove(at: index)
+        list.insert(item, at: target)
+        capsuleActions = list
+    }
+
+    func resetCapsuleActions() {
+        capsuleActions = CapsuleActionConfig.defaultList
+    }
+
+    private static func normalizedCapsuleActions(_ saved: [CapsuleActionConfig]?) -> [CapsuleActionConfig] {
+        guard var list = saved, !list.isEmpty else {
+            return CapsuleActionConfig.defaultList
+        }
+        let existing = Set(list.map(\.action))
+        for item in CapsuleActionConfig.defaultList where !existing.contains(item.action) {
+            list.append(item)
+        }
+        return list
+    }
+
     func applyPresenceChange(dock: Bool, menuBar: Bool) {
         // Ensure at least one entry point stays visible
         if !dock && !menuBar {
@@ -564,6 +678,7 @@ final class SettingsStore: ObservableObject {
             logRetentionPeriod: logRetentionPeriod,
             logMaxLines: logMaxLines,
             githubRepo: githubRepo,
+            capsuleActions: capsuleActions,
             apiConfigs: encodedMap
         )
         if let data = try? JSONEncoder().encode(persisted) {

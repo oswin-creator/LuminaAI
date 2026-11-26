@@ -106,7 +106,7 @@ final class TextSelectionMonitor {
         }
     }
 
-    private func readSelectedTextViaAccessibility() -> String? {
+    func readSelectedTextViaAccessibility() -> String? {
         let systemWide = AXUIElementCreateSystemWide()
         var focusedObj: CFTypeRef?
         let focusErr = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedObj)
@@ -118,7 +118,56 @@ final class TextSelectionMonitor {
         if textErr == .success, let str = selectedTextObj as? String, !str.isEmpty {
             return str
         }
+
+        // Secondary Accessibility extraction for complex web views: read selected range -> stringForRange
+        var rangeObj: CFTypeRef?
+        let rangeErr = AXUIElementCopyAttributeValue(focusedElement, kAXSelectedTextRangeAttribute as CFString, &rangeObj)
+        if rangeErr == .success, let rangeVal = rangeObj {
+            var rangedStrObj: CFTypeRef?
+            let strErr = AXUIElementCopyParameterizedAttributeValue(
+                focusedElement,
+                kAXStringForRangeParameterizedAttribute as CFString,
+                rangeVal,
+                &rangedStrObj
+            )
+            if strErr == .success, let str = rangedStrObj as? String, !str.isEmpty {
+                return str
+            }
+        }
         return nil
+    }
+
+    /// Smart Copy: tries native Cmd+C first; if webpage blocks copy (oncopy / preventDefault),
+    /// forcibly writes the Accessibility-extracted text straight to the clipboard!
+    func performSmartCopy(fallbackText: String, completion: @escaping (Bool) -> Void) {
+        let pb = NSPasteboard.general
+        let beforeCount = pb.changeCount
+
+        let source = CGEventSource(stateID: .combinedSessionState)
+        let cKeyCode: CGKeyCode = 8 // kVK_ANSI_C
+        if let keyDown = CGEvent(keyboardEventSource: source, virtualKey: cKeyCode, keyDown: true),
+           let keyUp = CGEvent(keyboardEventSource: source, virtualKey: cKeyCode, keyDown: false) {
+            keyDown.flags = .maskCommand
+            keyUp.flags = .maskCommand
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            let copiedByDefault = (pb.changeCount != beforeCount) &&
+                !(pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+
+            if copiedByDefault {
+                completion(false) // standard Cmd+C succeeded
+            } else {
+                // Webpage blocked default Cmd+C -> Force-copy via Accessibility text
+                let axFresh = self.readSelectedTextViaAccessibility()?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let finalText = (axFresh?.isEmpty == false ? axFresh! : fallbackText)
+                pb.clearContents()
+                pb.setString(finalText, forType: .string)
+                completion(true) // force-copy succeeded
+            }
+        }
     }
 
     private func readSelectedTextViaClipboardFallback(completion: @escaping (String?) -> Void) {
