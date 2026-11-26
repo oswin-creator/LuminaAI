@@ -197,6 +197,18 @@ final class ReplyPanelViewModel: ObservableObject {
         lastTokenSummary = "本机 Vision OCR 离线识别"
     }
 
+    /// One-off multimodal AI text extraction from the captured screenshot without changing global settings
+    func reextractWithAI() {
+        guard imageData != nil else { return }
+        messages.removeAll()
+        lastTokenSummary = ""
+        sendPrompt(
+            "请准确提取图片中的所有文字内容，保持原有排版和段落结构，不要添加额外解释。",
+            useFeature: .screenshotOCR,
+            hideUserPromptInUI: true
+        )
+    }
+
     func stopStreaming() {
         activeTask?.cancel()
         isStreaming = false
@@ -290,6 +302,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false // Clean SwiftUI shadow inside transparent margin
+        panel.isMovableByWindowBackground = true // Allows dragging the capsule by its icon or border/padding!
         panel.collectionBehavior = [.canJoinAllSpaces, .transient]
         panel.contentView = hosting
         panel.alphaValue = 0
@@ -562,6 +575,32 @@ struct ReplyFloatingView: View {
                     }
 
                     Spacer()
+
+                    if vm.feature == .screenshotOCR && vm.imageData != nil {
+                        Button(action: { vm.reextractWithAI() }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 11, weight: .medium))
+                                Text("AI 提取")
+                                    .font(.system(size: 11.5, weight: .medium))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                Capsule().fill(
+                                    LinearGradient(
+                                        colors: [Color(red: 0.15, green: 0.16, blue: 0.18), Color(red: 0.25, green: 0.26, blue: 0.29)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(vm.isStreaming)
+                        .help("单次使用多模态大模型重新提取图中文字")
+                    }
 
                     Button(action: { vm.copyLatestReply() }) {
                         HStack(spacing: 4) {
