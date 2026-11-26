@@ -1,0 +1,19 @@
+# macOS & Build Artifacts
+.DS_Store
+*.app/
+*.dmg
+*.zip
+build/
+.build/
+
+# Secrets, Keys, Certificates & User Settings (NEVER commit API keys!)
+*.p12
+*.pem
+*.key
+*.cer
+*.crt
+*.env
+.env.*
+settings.json
+usage_records.json
+*.log
