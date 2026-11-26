@@ -1284,6 +1284,12 @@ struct MainDashboardView: View {
                 ))
                 .font(.system(size: 13))
 
+                Toggle("开机自动启动（登录 macOS 时自动在后台运行）", isOn: Binding(
+                    get: { settings.launchAtLogin },
+                    set: { settings.setLaunchAtLogin($0) }
+                ))
+                .font(.system(size: 13))
+
                 Text("提示：为避免应用无法唤出，Dock 与菜单栏至少会保留一个入口。")
                     .font(.system(size: 11.5))
                     .foregroundColor(LuminaTheme.textSecondary)

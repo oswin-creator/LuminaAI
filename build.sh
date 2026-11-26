@@ -112,6 +112,7 @@ swiftc \
     -framework Carbon \
     -framework Vision \
     -framework ScreenCaptureKit \
+    -framework ServiceManagement \
     -framework ApplicationServices \
     -o "${MACOS_DIR}/${APP_NAME}" \
     "${PROJECT_DIR}/Sources/Models.swift" \

@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Carbon
+import ServiceManagement
 
 // MARK: - Feature Kind
 
@@ -445,6 +446,7 @@ final class SettingsStore: ObservableObject {
     @Published var showInMenuBar: Bool {
         didSet { save() }
     }
+    @Published var launchAtLogin: Bool = false
     @Published var enableTextSelectionPopup: Bool {
         didSet { save() }
     }
@@ -552,6 +554,7 @@ final class SettingsStore: ObservableObject {
             self.capsuleActions = CapsuleActionConfig.defaultList
             self.apiConfigs = defaults
         }
+        self.launchAtLogin = Self.isLaunchAtLoginEnabled()
     }
 
     func config(for feature: FeatureKind) -> APIEndpointConfig {
@@ -659,6 +662,60 @@ final class SettingsStore: ObservableObject {
             showInMenuBar = menuBar
         }
         NotificationCenter.default.post(name: .luminaPresenceDidChange, object: nil)
+    }
+
+    private static var launchAgentPlistURL: URL {
+        FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("LaunchAgents/com.lumina.ai.assistant.plist")
+    }
+
+    static func isLaunchAtLoginEnabled() -> Bool {
+        if SMAppService.mainApp.status == .enabled {
+            return true
+        }
+        return FileManager.default.fileExists(atPath: launchAgentPlistURL.path)
+    }
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        if enabled {
+            do {
+                try SMAppService.mainApp.register()
+                try? FileManager.default.removeItem(at: Self.launchAgentPlistURL)
+                launchAtLogin = true
+                ToastHUD.shared.show("已开启开机自动启动")
+                AppLogger.shared.info("Enabled Launch at Login via SMAppService")
+                return
+            } catch {
+                // Fallback to user LaunchAgent plist so it works from any folder (e.g. Documents)
+                let appPath = Bundle.main.bundlePath
+                let plist: [String: Any] = [
+                    "Label": "com.lumina.ai.assistant",
+                    "ProgramArguments": ["/usr/bin/open", "-a", appPath],
+                    "RunAtLoad": true
+                ]
+                let dir = Self.launchAgentPlistURL.deletingLastPathComponent()
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                if let data = try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0) {
+                    do {
+                        try data.write(to: Self.launchAgentPlistURL, options: .atomic)
+                        launchAtLogin = true
+                        ToastHUD.shared.show("已开启开机自动启动")
+                        AppLogger.shared.info("Enabled Launch at Login via LaunchAgent plist")
+                        return
+                    } catch {
+                        AppLogger.shared.error("LaunchAgent write failed: \(error.localizedDescription)")
+                    }
+                }
+                launchAtLogin = false
+                ToastHUD.shared.show("开启开机启动失败，请将应用移至「应用程序」文件夹后重试")
+            }
+        } else {
+            try? SMAppService.mainApp.unregister()
+            try? FileManager.default.removeItem(at: Self.launchAgentPlistURL)
+            launchAtLogin = false
+            ToastHUD.shared.show("已关闭开机自动启动")
+            AppLogger.shared.info("Disabled Launch at Login")
+        }
     }
 
     private func save() {
