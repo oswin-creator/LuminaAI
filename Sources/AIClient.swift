@@ -345,11 +345,28 @@ final class AIClient {
 
         if enableThinking {
             body["reasoning_effort"] = effort.rawValue
+            let qwenBudget: Int
+            let dictBudget: Int
+            switch effort {
+            case .low:
+                qwenBudget = 512
+                dictBudget = 1024
+            case .medium:
+                qwenBudget = 2048
+                dictBudget = 4096
+            case .high:
+                qwenBudget = 8192
+                dictBudget = 10240
+            }
             if usesEnableThinkingBool {
                 body["enable_thinking"] = true
+                body["thinking_budget"] = qwenBudget
             }
             if usesThinkingDict {
-                body["thinking"] = ["type": "enabled"]
+                body["thinking"] = [
+                    "type": "enabled",
+                    "budget_tokens": dictBudget
+                ]
             }
         } else {
             if usesEnableThinkingBool {

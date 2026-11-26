@@ -480,10 +480,10 @@ final class KeyableFloatingPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 
     override func sendEvent(_ event: NSEvent) {
-        // Use native performDrag(with:) when dragging inside the top header bar (excluding right buttons)
+        // Use native performDrag(with:) when dragging inside the top header bar (excluding right action buttons)
         if event.type == .leftMouseDown {
             let pt = event.locationInWindow
-            let headerRect = NSRect(x: 10, y: frame.height - 48, width: max(40, frame.width - 150), height: 40)
+            let headerRect = NSRect(x: 10, y: frame.height - 48, width: max(40, frame.width - 260), height: 40)
             if headerRect.contains(pt) {
                 performDrag(with: event)
                 return
@@ -930,7 +930,7 @@ struct ReplyFloatingView: View {
     }
 }
 
-// MARK: - Rich Markdown & Emoji Message Renderer (Zero @State)
+// MARK: - Rich Markdown, Table & Emoji Message Renderer (Zero @State)
 
 struct MarkdownMessageView: View {
     let markdown: String
@@ -938,13 +938,29 @@ struct MarkdownMessageView: View {
     private enum Block: Identifiable {
         case text(id: Int, content: String)
         case code(id: Int, language: String, code: String)
+        case table(id: Int, headers: [String], rows: [[String]])
 
         var id: Int {
             switch self {
             case .text(let id, _): return id
             case .code(let id, _, _): return id
+            case .table(let id, _, _): return id
             }
         }
+    }
+
+    private static func isTableSeparatorLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.contains("-") && trimmed.contains("|") else { return false }
+        let allowed = CharacterSet(charactersIn: "|:- \t")
+        return trimmed.unicodeScalars.allSatisfy { allowed.contains($0) }
+    }
+
+    private static func parseTableRow(_ line: String) -> [String] {
+        var s = line.trimmingCharacters(in: .whitespaces)
+        if s.hasPrefix("|") { s.removeFirst() }
+        if s.hasSuffix("|") { s.removeLast() }
+        return s.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
     private var blocks: [Block] {
@@ -954,9 +970,21 @@ struct MarkdownMessageView: View {
         var codeLang = ""
         var buffer: [String] = []
         var nextID = 0
+        var i = 0
 
-        for line in lines {
-            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+        func flushTextBuffer() {
+            if !buffer.isEmpty {
+                result.append(.text(id: nextID, content: buffer.joined(separator: "\n")))
+                nextID += 1
+                buffer.removeAll()
+            }
+        }
+
+        while i < lines.count {
+            let line = lines[i]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.hasPrefix("```") {
                 if inCode {
                     result.append(.code(id: nextID, language: codeLang, code: buffer.joined(separator: "\n")))
                     nextID += 1
@@ -964,18 +992,45 @@ struct MarkdownMessageView: View {
                     codeLang = ""
                     inCode = false
                 } else {
-                    if !buffer.isEmpty {
-                        result.append(.text(id: nextID, content: buffer.joined(separator: "\n")))
-                        nextID += 1
-                        buffer.removeAll()
-                    }
-                    codeLang = String(line.trimmingCharacters(in: .whitespaces).dropFirst(3)).trimmingCharacters(in: .whitespaces)
+                    flushTextBuffer()
+                    codeLang = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
                     inCode = true
                 }
-            } else {
-                buffer.append(line)
+                i += 1
+                continue
             }
+
+            if !inCode,
+               line.contains("|"),
+               i + 1 < lines.count,
+               Self.isTableSeparatorLine(lines[i + 1]) {
+                flushTextBuffer()
+                let headers = Self.parseTableRow(line)
+                i += 2 // skip header + separator
+                var rows: [[String]] = []
+                while i < lines.count {
+                    let rowLine = lines[i].trimmingCharacters(in: .whitespaces)
+                    if rowLine.isEmpty || !rowLine.contains("|") { break }
+                    var cells = Self.parseTableRow(lines[i])
+                    if cells.count < headers.count {
+                        cells.append(contentsOf: Array(repeating: "", count: headers.count - cells.count))
+                    } else if cells.count > headers.count && !headers.isEmpty {
+                        cells = Array(cells.prefix(headers.count))
+                    }
+                    rows.append(cells)
+                    i += 1
+                }
+                if !headers.isEmpty {
+                    result.append(.table(id: nextID, headers: headers, rows: rows))
+                    nextID += 1
+                }
+                continue
+            }
+
+            buffer.append(line)
+            i += 1
         }
+
         if !buffer.isEmpty {
             if inCode {
                 result.append(.code(id: nextID, language: codeLang, code: buffer.joined(separator: "\n")))
@@ -1018,6 +1073,55 @@ struct MarkdownMessageView: View {
                         RoundedRectangle(cornerRadius: 10)
                             .fill(Color.black.opacity(0.045))
                     )
+
+                case .table(_, let headers, let rows):
+                    ScrollView(.horizontal, showsIndicators: true) {
+                        Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                            GridRow {
+                                ForEach(Array(headers.enumerated()), id: \.offset) { colIdx, head in
+                                    inlineMarkdownText(head, size: 12.5, weight: .semibold)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 7)
+                                        .frame(minWidth: 72, alignment: .leading)
+                                        .background(Color.black.opacity(0.06))
+                                        .overlay(
+                                            Rectangle()
+                                                .fill(Color.black.opacity(0.08))
+                                                .frame(width: colIdx < headers.count - 1 ? 0.5 : 0),
+                                            alignment: .trailing
+                                        )
+                                }
+                            }
+                            Divider().opacity(0.35)
+
+                            ForEach(Array(rows.enumerated()), id: \.offset) { rowIdx, row in
+                                GridRow {
+                                    ForEach(Array(row.enumerated()), id: \.offset) { colIdx, cell in
+                                        inlineMarkdownText(cell, size: 12.5, weight: .regular)
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 6)
+                                            .frame(minWidth: 72, alignment: .leading)
+                                            .background(rowIdx % 2 == 1 ? Color.black.opacity(0.025) : Color.clear)
+                                            .overlay(
+                                                Rectangle()
+                                                    .fill(Color.black.opacity(0.07))
+                                                    .frame(width: colIdx < row.count - 1 ? 0.5 : 0),
+                                                alignment: .trailing
+                                            )
+                                    }
+                                }
+                                if rowIdx < rows.count - 1 {
+                                    Divider().opacity(0.22)
+                                }
+                            }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 9))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 9)
+                                .stroke(Color.black.opacity(0.10), lineWidth: 0.8)
+                        )
+                    }
+                    .padding(.vertical, 2)
 
                 case .text(_, let content):
                     VStack(alignment: .leading, spacing: 5) {
