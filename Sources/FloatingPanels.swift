@@ -341,20 +341,27 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             y = min(point.y + 8, bounds.maxY - height - 8)
         }
 
-        // .nonactivatingPanel allows key input without raising main dashboard window!
+        // Native chromeless NSPanel: gives genuine macOS shadow, rounded corners,
+        // wide 4-edge + 4-corner resize zones, and native macOS resize cursors everywhere,
+        // while .nonactivatingPanel prevents raising the main dashboard window!
         let panel = KeyableFloatingPanel(
             contentRect: NSRect(x: x, y: y, width: width, height: height),
-            styleMask: [.borderless, .resizable, .nonactivatingPanel],
+            styleMask: [.titled, .resizable, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         panel.identifier = NSUserInterfaceItemIdentifier("LuminaReplyPanel")
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
         panel.level = .floating
-        panel.backgroundColor = .clear
-        panel.isOpaque = false
-        panel.hasShadow = false // SwiftUI draws clean rounded shadow inside padding
-        panel.isMovableByWindowBackground = false // Header drags window; edges resize cleanly
-        panel.minSize = NSSize(width: 380, height: 300)
+        panel.backgroundColor = NSColor(calibratedRed: 0.96, green: 0.96, blue: 0.97, alpha: 1.0)
+        panel.isOpaque = true
+        panel.hasShadow = true // Native macOS window shadow
+        panel.isMovableByWindowBackground = false
+        panel.minSize = NSSize(width: 360, height: 280)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.delegate = self
 
@@ -373,8 +380,6 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         )
 
         let hosting = NSHostingView(rootView: rootView)
-        hosting.wantsLayer = true
-        hosting.layer?.backgroundColor = NSColor.clear.cgColor
         panel.contentView = hosting
         panel.alphaValue = 0
         // IMPORTANT: Do NOT call NSApp.activate() so the main dashboard window does not jump to front!
@@ -416,9 +421,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     private func handlePotentialOutsideClick() {
         guard let panel = replyPanel, let vm = replyVM, !vm.isPinned else { return }
         let clickPoint = NSEvent.mouseLocation
-        // Account for 16pt transparent shadow margin
-        let visibleCardRect = panel.frame.insetBy(dx: 12, dy: 12)
-        if !visibleCardRect.contains(clickPoint) {
+        if !panel.frame.contains(clickPoint) {
             DispatchQueue.main.async { [weak self] in
                 self?.dismissReplyPanel()
             }
@@ -444,150 +447,23 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     }
 }
 
-// MARK: - Standard 4-Edge & 4-Corner Resizable Borderless Panel
-
-enum PanelResizeEdge {
-    case left, right, top, bottom
-    case topLeft, topRight, bottomLeft, bottomRight
-}
+// MARK: - Native Chromeless Resizable Panel (100% Native macOS Resize & Shadow)
 
 final class KeyableFloatingPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
-    private let cardInset: CGFloat = 16.0
-    private var activeResizeEdge: PanelResizeEdge?
-    private var isDraggingHeader: Bool = false
-    private var initialMouseScreen: NSPoint = .zero
-    private var initialFrame: NSRect = .zero
-
     override func sendEvent(_ event: NSEvent) {
-        switch event.type {
-        case .mouseMoved:
-            if activeResizeEdge == nil && !isDraggingHeader {
-                if let edge = hitTestEdge(windowPoint: event.locationInWindow) {
-                    applyCursor(for: edge)
-                } else {
-                    NSCursor.arrow.set()
-                }
-            }
-            super.sendEvent(event)
-
-        case .leftMouseDown:
-            if let edge = hitTestEdge(windowPoint: event.locationInWindow) {
-                activeResizeEdge = edge
-                initialMouseScreen = NSEvent.mouseLocation
-                initialFrame = frame
-                return // Consume so inner SwiftUI views don't intercept edge resize
-            }
-            // Check if clicking in header drag area (top 48pt of visible card, avoiding right-side buttons)
-            let cardRect = NSRect(origin: .zero, size: frame.size).insetBy(dx: cardInset, dy: cardInset)
-            let headerRect = NSRect(x: cardRect.minX + 6, y: cardRect.maxY - 48, width: max(40, cardRect.width - 145), height: 42)
-            if headerRect.contains(event.locationInWindow) {
-                isDraggingHeader = true
-                initialMouseScreen = NSEvent.mouseLocation
-                initialFrame = frame
+        // Use native performDrag(with:) when dragging inside the top header bar (excluding right buttons)
+        if event.type == .leftMouseDown {
+            let pt = event.locationInWindow
+            let headerRect = NSRect(x: 10, y: frame.height - 48, width: max(40, frame.width - 150), height: 40)
+            if headerRect.contains(pt) {
+                performDrag(with: event)
                 return
             }
-            super.sendEvent(event)
-
-        case .leftMouseDragged:
-            if let edge = activeResizeEdge {
-                let current = NSEvent.mouseLocation
-                let dx = current.x - initialMouseScreen.x
-                let dy = current.y - initialMouseScreen.y
-                var f = initialFrame
-                let minW = minSize.width
-                let minH = minSize.height
-
-                switch edge {
-                case .right:
-                    f.size.width = max(minW, initialFrame.width + dx)
-                case .left:
-                    let newW = max(minW, initialFrame.width - dx)
-                    f.origin.x = initialFrame.maxX - newW
-                    f.size.width = newW
-                case .top:
-                    f.size.height = max(minH, initialFrame.height + dy)
-                case .bottom:
-                    let newH = max(minH, initialFrame.height - dy)
-                    f.origin.y = initialFrame.maxY - newH
-                    f.size.height = newH
-                case .topRight:
-                    f.size.width = max(minW, initialFrame.width + dx)
-                    f.size.height = max(minH, initialFrame.height + dy)
-                case .topLeft:
-                    let newW = max(minW, initialFrame.width - dx)
-                    f.origin.x = initialFrame.maxX - newW
-                    f.size.width = newW
-                    f.size.height = max(minH, initialFrame.height + dy)
-                case .bottomRight:
-                    f.size.width = max(minW, initialFrame.width + dx)
-                    let newH = max(minH, initialFrame.height - dy)
-                    f.origin.y = initialFrame.maxY - newH
-                    f.size.height = newH
-                case .bottomLeft:
-                    let newW = max(minW, initialFrame.width - dx)
-                    f.origin.x = initialFrame.maxX - newW
-                    f.size.width = newW
-                    let newH = max(minH, initialFrame.height - dy)
-                    f.origin.y = initialFrame.maxY - newH
-                    f.size.height = newH
-                }
-                setFrame(f, display: true)
-                return
-            }
-            if isDraggingHeader {
-                let current = NSEvent.mouseLocation
-                let dx = current.x - initialMouseScreen.x
-                let dy = current.y - initialMouseScreen.y
-                setFrameOrigin(NSPoint(x: initialFrame.origin.x + dx, y: initialFrame.origin.y + dy))
-                return
-            }
-            super.sendEvent(event)
-
-        case .leftMouseUp:
-            if activeResizeEdge != nil || isDraggingHeader {
-                activeResizeEdge = nil
-                isDraggingHeader = false
-                NSCursor.arrow.set()
-                return
-            }
-            super.sendEvent(event)
-
-        default:
-            super.sendEvent(event)
         }
-    }
-
-    private func hitTestEdge(windowPoint pt: NSPoint) -> PanelResizeEdge? {
-        let card = NSRect(origin: .zero, size: frame.size).insetBy(dx: cardInset, dy: cardInset)
-        let cornerTol: CGFloat = 14
-        let edgeTol: CGFloat = 8
-
-        let nearLeft = abs(pt.x - card.minX) <= cornerTol
-        let nearRight = abs(pt.x - card.maxX) <= cornerTol
-        let nearBottom = abs(pt.y - card.minY) <= cornerTol
-        let nearTop = abs(pt.y - card.maxY) <= cornerTol
-
-        if nearLeft && nearTop { return .topLeft }
-        if nearRight && nearTop { return .topRight }
-        if nearLeft && nearBottom { return .bottomLeft }
-        if nearRight && nearBottom { return .bottomRight }
-
-        if abs(pt.x - card.minX) <= edgeTol && pt.y >= card.minY && pt.y <= card.maxY { return .left }
-        if abs(pt.x - card.maxX) <= edgeTol && pt.y >= card.minY && pt.y <= card.maxY { return .right }
-        if abs(pt.y - card.maxY) <= edgeTol && pt.x >= card.minX && pt.x <= card.maxX { return .top }
-        if abs(pt.y - card.minY) <= edgeTol && pt.x >= card.minX && pt.x <= card.maxX { return .bottom }
-        return nil
-    }
-
-    private func applyCursor(for edge: PanelResizeEdge) {
-        switch edge {
-        case .left, .right: NSCursor.resizeLeftRight.set()
-        case .top, .bottom: NSCursor.resizeUpDown.set()
-        case .topLeft, .topRight, .bottomLeft, .bottomRight: NSCursor.crosshair.set()
-        }
+        super.sendEvent(event)
     }
 }
 
@@ -977,13 +853,7 @@ struct ReplyFloatingView: View {
                 .background(Color(red: 0.94, green: 0.94, blue: 0.95))
             }
             .background(Color(red: 0.96, green: 0.96, blue: 0.97))
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.white.opacity(0.88), lineWidth: 1.2)
-            )
-            .shadow(color: Color.black.opacity(0.18), radius: 14, x: 0, y: 6)
-            .padding(16) // Transparent outer margin + 4-edge/4-corner native resize zone
+            .ignoresSafeArea()
     }
 
     private func sendFollowUp() {
