@@ -871,7 +871,7 @@ struct ClipboardPopupView: View {
             item.plainText.components(separatedBy: .newlines).count > 4 || item.plainText.count > 135
         )
         let altModeIsPlain = (settings.clipboardDefaultPasteMode == .richText)
-        let altModeLabel = altModeIsPlain ? "粘贴为纯文本" : "粘贴为富文本"
+        let altModeLabel = altModeIsPlain ? "切换为纯文本粘贴" : "切换为富文本粘贴"
 
         return ZStack(alignment: .topTrailing) {
             VStack(alignment: .leading, spacing: 6) {
