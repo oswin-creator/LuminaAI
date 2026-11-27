@@ -80,31 +80,25 @@ final class ClipboardHistoryStore: ObservableObject {
             return
         }
 
-        // 2. Check Rich Text (RTF or HTML)
-        let plainStr = pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if let rtfData = pb.data(forType: .rtf), !plainStr.isEmpty {
-            captureRichText(rtfData: rtfData, plainText: pb.string(forType: .string) ?? plainStr)
-            return
-        }
-        if let htmlData = pb.data(forType: .html), !plainStr.isEmpty,
-           let attr = try? NSAttributedString(
-               data: htmlData,
-               options: [.documentType: NSAttributedString.DocumentType.html, .characterEncoding: String.Encoding.utf8.rawValue],
-               documentAttributes: nil
-           ),
-           let rtfData = try? attr.data(from: NSRange(location: 0, length: attr.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]) {
-            captureRichText(rtfData: rtfData, plainText: pb.string(forType: .string) ?? attr.string)
+        // 2. Check Rich Text (preserve BOTH raw HTML and RTF for 100% faithful preview & paste!)
+        let rawPlain = pb.string(forType: .string) ?? ""
+        let trimmedPlain = rawPlain.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rtfData = pb.data(forType: .rtf)
+        let htmlData = pb.data(forType: .html)
+
+        if (rtfData != nil || htmlData != nil) && !trimmedPlain.isEmpty {
+            captureRichText(rtfData: rtfData, htmlData: htmlData, plainText: rawPlain)
             return
         }
 
         // 3. Plain Text
-        if let rawText = pb.string(forType: .string), !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            capturePlainText(rawText)
+        if !trimmedPlain.isEmpty {
+            capturePlainText(rawPlain)
         }
     }
 
     private func capturePlainText(_ text: String) {
-        let hash = Self.sha256Hex(Data(text.utf8))
+        let hash = Self.sha256Hex(Data(("plain:" + text).utf8))
         if promoteIfDuplicate(hash: hash) { return }
 
         let item = ClipboardHistoryItem(
@@ -112,6 +106,7 @@ final class ClipboardHistoryStore: ObservableObject {
             kind: .plainText,
             plainText: text,
             rtfFilename: nil,
+            htmlFilename: nil,
             imageFilename: nil,
             thumbFilename: nil,
             contentHash: hash,
@@ -121,17 +116,34 @@ final class ClipboardHistoryStore: ObservableObject {
         insertAndPersist(item)
     }
 
-    private func captureRichText(rtfData: Data, plainText: String) {
-        let hash = Self.sha256Hex(rtfData)
+    private func captureRichText(rtfData: Data?, htmlData: Data?, plainText: String) {
+        var hashInput = Data("rich:".utf8)
+        if let h = htmlData { hashInput.append(h) }
+        if let r = rtfData { hashInput.append(r) }
+        let hash = Self.sha256Hex(hashInput)
         if promoteIfDuplicate(hash: hash) { return }
 
         let id = UUID()
-        let rtfName = "\(id.uuidString).rtf"
-        let rtfURL = assetsDirURL.appendingPathComponent(rtfName)
-        do {
-            try rtfData.write(to: rtfURL, options: .atomic)
-        } catch {
-            AppLogger.shared.error("Clipboard RTF write failed: \(error.localizedDescription)")
+        var savedRTF: String? = nil
+        var savedHTML: String? = nil
+        var totalBytes = Int64(plainText.utf8.count)
+
+        if let rtf = rtfData {
+            let name = "\(id.uuidString).rtf"
+            if (try? rtf.write(to: assetsDirURL.appendingPathComponent(name), options: .atomic)) != nil {
+                savedRTF = name
+                totalBytes += Int64(rtf.count)
+            }
+        }
+        if let html = htmlData {
+            let name = "\(id.uuidString).html"
+            if (try? html.write(to: assetsDirURL.appendingPathComponent(name), options: .atomic)) != nil {
+                savedHTML = name
+                totalBytes += Int64(html.count)
+            }
+        }
+
+        guard savedRTF != nil || savedHTML != nil else {
             capturePlainText(plainText)
             return
         }
@@ -140,11 +152,12 @@ final class ClipboardHistoryStore: ObservableObject {
             id: id,
             kind: .richText,
             plainText: plainText,
-            rtfFilename: rtfName,
+            rtfFilename: savedRTF,
+            htmlFilename: savedHTML,
             imageFilename: nil,
             thumbFilename: nil,
             contentHash: hash,
-            byteSize: Int64(rtfData.count + plainText.utf8.count),
+            byteSize: totalBytes,
             createdAt: Date()
         )
         insertAndPersist(item)
@@ -177,6 +190,7 @@ final class ClipboardHistoryStore: ObservableObject {
             kind: .image,
             plainText: "",
             rtfFilename: nil,
+            htmlFilename: nil,
             imageFilename: imgName,
             thumbFilename: FileManager.default.fileExists(atPath: thumbURL.path) ? thumbName : nil,
             contentHash: hash,
@@ -264,11 +278,22 @@ final class ClipboardHistoryStore: ObservableObject {
             } else {
                 usePlain = (SettingsStore.shared.clipboardDefaultPasteMode == .plainText)
             }
-            if !usePlain,
-               let fname = item.rtfFilename,
-               let rtfData = try? Data(contentsOf: assetsDirURL.appendingPathComponent(fname)) {
-                pb.setData(rtfData, forType: .rtf)
+            if !usePlain {
+                var wroteRich = false
+                if let htmlName = item.htmlFilename,
+                   let htmlData = try? Data(contentsOf: assetsDirURL.appendingPathComponent(htmlName)) {
+                    pb.setData(htmlData, forType: .html)
+                    wroteRich = true
+                }
+                if let rtfName = item.rtfFilename,
+                   let rtfData = try? Data(contentsOf: assetsDirURL.appendingPathComponent(rtfName)) {
+                    pb.setData(rtfData, forType: .rtf)
+                    wroteRich = true
+                }
                 pb.setString(item.plainText, forType: .string)
+                if !wroteRich {
+                    pb.setString(item.plainText, forType: .string)
+                }
             } else {
                 pb.setString(item.plainText, forType: .string)
             }
@@ -295,20 +320,37 @@ final class ClipboardHistoryStore: ObservableObject {
         return nil
     }
 
-    /// Loads RTF preview with font sizes clamped to <= 15pt so giant headings never blow up card layout
-    func loadClampedRichTextPreview(for item: ClipboardHistoryItem) -> AttributedString? {
-        guard item.kind == .richText,
-              let fname = item.rtfFilename,
-              let data = try? Data(contentsOf: assetsDirURL.appendingPathComponent(fname)),
-              let nsAttr = try? NSMutableAttributedString(
-                  data: data,
-                  options: [.documentType: NSAttributedString.DocumentType.rtf],
-                  documentAttributes: nil
-              ) else {
-            return nil
+    /// Loads native NSAttributedString from preserved HTML or RTF, preserving colors, links, bold/italic,
+    /// highlights, and inline images (NSTextAttachment), while clamping font sizes <= 15pt and inline images <= 36pt.
+    func loadClampedRichNSAttributedString(for item: ClipboardHistoryItem) -> NSAttributedString? {
+        guard item.kind == .richText else { return nil }
+
+        var parsed: NSMutableAttributedString? = nil
+        if let htmlName = item.htmlFilename,
+           let htmlData = try? Data(contentsOf: assetsDirURL.appendingPathComponent(htmlName)) {
+            parsed = try? NSMutableAttributedString(
+                data: htmlData,
+                options: [
+                    .documentType: NSAttributedString.DocumentType.html,
+                    .characterEncoding: String.Encoding.utf8.rawValue
+                ],
+                documentAttributes: nil
+            )
         }
+        if parsed == nil,
+           let rtfName = item.rtfFilename,
+           let rtfData = try? Data(contentsOf: assetsDirURL.appendingPathComponent(rtfName)) {
+            parsed = try? NSMutableAttributedString(
+                data: rtfData,
+                options: [.documentType: NSAttributedString.DocumentType.rtf],
+                documentAttributes: nil
+            )
+        }
+        guard let nsAttr = parsed, nsAttr.length > 0 else { return nil }
 
         let fullRange = NSRange(location: 0, length: nsAttr.length)
+
+        // 1. Clamp font sizes to 11.5...15pt while keeping bold/italic traits
         nsAttr.enumerateAttribute(.font, in: fullRange, options: []) { value, range, _ in
             if let font = value as? NSFont {
                 let clampedSize = min(max(font.pointSize, 11.5), 15.0)
@@ -323,15 +365,48 @@ final class ClipboardHistoryStore: ObservableObject {
                 nsAttr.addAttribute(.font, value: NSFont.systemFont(ofSize: 13), range: range)
             }
         }
-        // Normalize dark legible foreground on light glass cards and remove jarring background highlights
-        nsAttr.removeAttribute(.backgroundColor, range: fullRange)
-        nsAttr.addAttribute(.foregroundColor, value: NSColor(calibratedRed: 0.12, green: 0.13, blue: 0.14, alpha: 1.0), range: fullRange)
 
-        return try? AttributedString(nsAttr, including: \.appKit)
+        // 2. Preserve real colors & blue links; only darken unreadable near-white text on light glass
+        nsAttr.enumerateAttribute(.foregroundColor, in: fullRange, options: []) { value, range, _ in
+            if let color = value as? NSColor,
+               let rgb = color.usingColorSpace(.deviceRGB) {
+                let luminance = 0.299 * rgb.redComponent + 0.587 * rgb.greenComponent + 0.114 * rgb.blueComponent
+                if luminance > 0.86 {
+                    nsAttr.addAttribute(.foregroundColor, value: NSColor(calibratedRed: 0.14, green: 0.15, blue: 0.17, alpha: 1.0), range: range)
+                }
+            }
+        }
+
+        // 3. Make hyperlinks clearly recognizable in crisp Apple system blue
+        nsAttr.enumerateAttribute(.link, in: fullRange, options: []) { value, range, _ in
+            if value != nil {
+                nsAttr.addAttribute(.foregroundColor, value: NSColor.systemBlue, range: range)
+                nsAttr.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+            }
+        }
+
+        // 4. Scale down inline NSTextAttachment images cleanly so logos/icons fit nicely without exploding card height
+        nsAttr.enumerateAttribute(.attachment, in: fullRange, options: []) { value, _, _ in
+            if let att = value as? NSTextAttachment {
+                let img = att.image ?? (att.fileWrapper?.regularFileContents.flatMap { NSImage(data: $0) })
+                if let img = img {
+                    let orig = img.size
+                    if orig.width > 0 && orig.height > 0 {
+                        let maxH: CGFloat = 34.0
+                        let maxW: CGFloat = 180.0
+                        let scale = min(1.0, min(maxH / orig.height, maxW / orig.width))
+                        att.bounds = CGRect(x: 0, y: -4, width: orig.width * scale, height: orig.height * scale)
+                    }
+                }
+            }
+        }
+
+        return nsAttr
     }
 
     private func deleteAssets(for item: ClipboardHistoryItem) {
         if let f = item.rtfFilename { try? FileManager.default.removeItem(at: assetsDirURL.appendingPathComponent(f)) }
+        if let f = item.htmlFilename { try? FileManager.default.removeItem(at: assetsDirURL.appendingPathComponent(f)) }
         if let f = item.imageFilename { try? FileManager.default.removeItem(at: assetsDirURL.appendingPathComponent(f)) }
         if let f = item.thumbFilename { try? FileManager.default.removeItem(at: assetsDirURL.appendingPathComponent(f)) }
     }
@@ -785,10 +860,8 @@ struct ClipboardPopupView: View {
                     }
 
                 case .richText:
-                    if let richAttr = store.loadClampedRichTextPreview(for: item) {
-                        Text(richAttr)
-                            .lineLimit(isExpanded ? nil : 4)
-                            .lineSpacing(3)
+                    if let richNSAttr = store.loadClampedRichNSAttributedString(for: item) {
+                        NativeRichTextPreview(attributedString: richNSAttr, maxLines: isExpanded ? 0 : 4)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         Text(item.plainText)
@@ -871,5 +944,31 @@ struct ClipboardPopupView: View {
                 vm.hoveredItemID = nil
             }
         }
+    }
+}
+
+// MARK: - Native AppKit Rich Text Preview (Renders Colors, Links, Highlights & Inline NSTextAttachment Images)
+
+struct NativeRichTextPreview: NSViewRepresentable {
+    let attributedString: NSAttributedString
+    let maxLines: Int
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(wrappingLabelWithString: "")
+        field.isEditable = false
+        field.isSelectable = false
+        field.drawsBackground = false
+        field.isBezeled = false
+        field.allowsEditingTextAttributes = true
+        field.lineBreakMode = .byTruncatingTail
+        field.cell?.truncatesLastVisibleLine = true
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        nsView.attributedStringValue = attributedString
+        nsView.maximumNumberOfLines = maxLines
+        nsView.preferredMaxLayoutWidth = 356
     }
 }

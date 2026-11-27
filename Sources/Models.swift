@@ -121,6 +121,7 @@ struct ClipboardHistoryItem: Codable, Equatable, Identifiable {
     var kind: ClipboardItemKind
     var plainText: String
     var rtfFilename: String?
+    var htmlFilename: String?
     var imageFilename: String?
     var thumbFilename: String?
     var contentHash: String
