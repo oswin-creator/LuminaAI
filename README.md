@@ -35,10 +35,12 @@
 
 Most AI desktop apps are heavy Electron wrappers around a web chat box that force you to `⌘Tab` away from your work, copy-paste context, and wait.
 
-**LuminaAI is NOT a generic chatbot window.** It is a **system-wide, mouse- and keyboard-integrated macOS utility** built from scratch in pure **Swift + AppKit + SwiftUI** (~2.6 MB binary, ~20–30 MB idle RAM, ~0.0% idle CPU). It stays invisible in your menu bar and brings AI directly to your cursor in **two instant, zero-context-switch interactions**:
+**LuminaAI is NOT a generic chatbot window.** It is a **system-wide, mouse- and keyboard-integrated macOS productivity suite** built from scratch in pure **Swift + AppKit + SwiftUI** (~3 MB binary, ~20–30 MB idle RAM, ~0.0% idle CPU). It stays invisible in your menu bar and brings four zero-context-switch native tools directly to your cursor:
 
 1. **Global Text-Selection AI (划词 AI)** — Drag-select or double-click text in *any* macOS app to summon a draggable floating capsule right beside your cursor.
 2. **Global Screenshot & Multimodal Vision AI (截屏 AI)** — Press your custom shortcut (or click a **mouse side button**) to capture any screen region for offline OCR, AI OCR, image translation, or visual Q&A.
+3. **Frosted-Glass Radial Menu (快捷轮盘)** — Hold a dedicated hotkey or mouse macro to pop open a translucent glass bubble ring around your cursor; slide to any slot and release to launch/switch apps or send custom shortcuts without breaking focus.
+4. **Minimalist Clipboard History (剪贴板历史)** — Press your shortcut (default `⌥V`) to summon a restrained light-glass clipboard history supporting plain text, native rich text (links, colors, inline images), and image thumbnails with one-click rich/plain paste switching.
 
 ---
 
@@ -71,12 +73,21 @@ LuminaAI is engineered to integrate deeply with **custom keyboard shortcuts and 
   - **AI Image Translation**: Translate text directly inside images with language selection
   - **Multimodal AI Q&A**: Ask questions about code errors, charts, UI designs, or documents with quick prompt chips
 
-### 3. Per-Feature API Routing, Thinking Budgets & Analytics
+### 3. Frosted-Glass Radial Menu (`快捷轮盘`)
+- **Hold-to-Show, Release-to-Trigger**: Hold your dedicated hotkey (default `⌥R`, compatible with F-keys, multi-modifier combos & mouse side-button macros) to open a bright translucent frosted-glass bubble ring (`NSVisualEffectView`) around your cursor. Slide onto a bubble and release to execute; release in the center hub to cancel.
+- **Flexible Slot Actions & Icons**: Add, delete, and reorder slots freely. Bind each slot to either **Launch / Switch Application** or **Simulate Custom Shortcut** (`CGEvent`, zero focus interruption). Supports **native App icons** (independently selectable even for shortcut slots), **SF Symbols**, and **custom local images**.
+
+### 4. Minimalist Light-Glass Clipboard History (`剪贴板历史`)
+- **Zero-Clutter Native Glass Popup**: Trigger with `⌥V` (customizable) to summon a restrained light-glass panel right by your cursor. Navigate with mouse or `↑↓` + `Enter`, click outside to dismiss, or pin on top while still pasting directly into your foreground app.
+- **Plain Text, Native Rich Text & Images**: Deduplicates via SHA256; renders true AppKit rich text (preserving colors, blue links, bold/italic, and inline logos while clamping max font size `≤15pt` and auto-folding long items at 4 lines with Expand/Collapse); caches image thumbnails on disk.
+- **Dual Rich/Plain Paste & Storage Quotas**: Configure default paste mode (Rich Text vs Plain Text) with a hover-only one-off toggle (`切换为纯文本粘贴` / `切换为富文本粘贴`), plus configurable max item count (up to 500) and MB storage limit.
+
+### 5. Per-Feature API Routing, Thinking Budgets & Analytics
 - **Independent API per Feature**: Route each of the 7 text/vision features to different OpenAI-compatible providers (Volcengine Ark / Doubao, SiliconFlow, OpenAI, DeepSeek, or third-party relays like PackCode / OneAPI / NewAPI), with **1-click Copy API Config to other features** and **1-click Connectivity Test** (including real vision image probes).
 - **Real Thinking Effort Control**: Supports Low / Medium / High thinking budgets across model families (`thinking_budget` for Qwen3 / SiliconFlow / DashScope, `budget_tokens` for Claude / Doubao, `reasoning_effort` for OpenAI / Gemini), plus per-feature **Preset System Prompts**.
 - **7-Day Multi-API Usage & Cost Dashboard**: Smooth Bezier spline curves for Calls, Tokens, and relative proportional Cost with manual per-1M-token pricing.
 
-### 4. Lightweight Native macOS Engineering
+### 6. Lightweight Native macOS Engineering
 - **Ultra-Light Footprint**: ~2.6 MB native `arm64` binary, ~20–30 MB idle RAM (releases dashboard SwiftUI view tree when closed), ~0.0% idle CPU (zero drag-event polling).
 - **Permission-Preserving Updates**: Built-in GitHub auto-updater with multi-version changelog + local persistent certificate signing (`setup_local_cert.sh`) so macOS Accessibility & Screen Recording permissions survive updates without re-authorizing.
 - **Quality of Life**: Dock / Menu Bar presence toggle, optional **Launch at Login**, and rate-limited background logs (`1 Day / 1 Week / 1 Month` retention & line cap).
@@ -112,6 +123,8 @@ chmod +x build.sh && ./build.sh
 - **只用鼠标就能调用全部功能**：
   1. **全局划词 AI**：在任意软件中用鼠标拖选或双击文字，光标旁立刻弹出可拖动悬浮胶囊，一键触发 **复制（含网页强力复制）/ 翻译 / 解释 / 总结 / 追问**，支持自定义按钮显示与排序，无需切换窗口。
   2. **全局截屏 AI + 鼠标宏无缝联动**：支持自由录制任意自定义全局快捷键（支持 `F1–F12` 单键或任意多修饰键组合），你可以直接将其绑定到 **罗技 MX Master / 雷蛇 / BetterTouchTool 等鼠标侧键宏** 上——大拇指一按即可框选截屏（松手后仍可自由平移与四边/四角微调），一键完成 **复制截图 / 离线 Vision OCR + 单次大模型 AI 提取 / 截图 AI 翻译 / 多模态识图提问**。
+  3. **亮色毛玻璃快捷轮盘（Radial Menu）**：按住专属快捷键（默认 `⌥R`，兼容鼠标侧键宏）在鼠标四周呼出亮色半透明毛玻璃气泡圆环，滑动选中槽位松手即触发，中心区域松手取消；支持绑定 **打开/切换应用** 与 **无焦点模拟快捷键**，支持应用原生图标（快捷键槽位也可独立选任意 App 图标）、系统符号与自定义图片。
+  4. **极简亮色玻璃剪贴板历史（Clipboard History）**：按下快捷键（默认 `⌥V`）在光标旁呼出克制极简的毛玻璃浮窗，支持纯文本、原生富文本（保留颜色/蓝链/加粗/内嵌图标，自动限字号与 4 行折叠）与图片缩略图；支持默认富文本/纯文本粘贴及悬停单次切换、置顶固定粘贴与条数/MB 级磁盘上限管理。
 - **不打断工作流的原生交互**：流式回复浮窗支持 **Markdown 富文本、原生表格、代码块一键复制、默认折叠深度思考过程**，支持四边四角原生缩放、点击外部自动关闭与右上角图钉固定，且绝不把主控制台窗口弹到前面。
 - **7 大功能独立配置 API 与思考强度**：支持为每个划词/截屏功能单独接入火山方舟/豆包、硅基流动、OpenAI、DeepSeek 及各类第三方中转站，支持一键复制 API 配置、一键测试连通性（含视觉探针）、自定义预设提示词与思考强度预算（低/中/高）。
 - **近 7 天用量曲线 & 免重新授权自动更新**：内置编辑风 7 天多 API 曲线与手动单价成本核算；支持 Dock/菜单栏自由切换、开机自启、日志限流清理，以及内置 GitHub 一键更新（本地证书自动重签，更新后无需重新授予辅助功能与屏幕录制权限）。
