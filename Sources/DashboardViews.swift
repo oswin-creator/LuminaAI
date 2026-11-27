@@ -10,6 +10,7 @@ enum DashboardTab: String, CaseIterable, Identifiable {
     case selection = "划词"
     case screenshot = "截屏"
     case radialMenu = "快捷轮盘"
+    case clipboardHistory = "剪贴板"
     case appearance = "外观权限"
     case logs = "日志"
 
@@ -22,6 +23,7 @@ enum DashboardTab: String, CaseIterable, Identifiable {
         case .selection: return "text.cursor"
         case .screenshot: return "viewfinder"
         case .radialMenu: return "circle.hexagongrid"
+        case .clipboardHistory: return "doc.on.clipboard"
         case .appearance: return "slider.horizontal.3"
         case .logs: return "doc.text.magnifyingglass"
         }
@@ -32,6 +34,7 @@ enum HotkeyRecordingTarget: Equatable {
     case screenshot
     case radialGlobal
     case radialSlot(UUID)
+    case clipboardGlobal
 }
 
 // MARK: - Dashboard ViewModel (ObservableObject, ZERO @State)
@@ -177,6 +180,9 @@ final class DashboardViewModel: ObservableObject {
                     SettingsStore.shared.updateRadialSlot(slot)
                     ToastHUD.shared.show("槽位「\(slot.title)」快捷键已设为 \(newHotkey.displayString)")
                 }
+            case .clipboardGlobal:
+                SettingsStore.shared.clipboardHotkey = newHotkey
+                ToastHUD.shared.show("剪贴板历史快捷键已更新为 \(newHotkey.displayString)")
             }
             self.stopHotkeyRecording()
             return nil
@@ -222,6 +228,7 @@ struct MainDashboardView: View {
     @ObservedObject var permissions: PermissionManager
     @ObservedObject var logger: AppLogger
     @ObservedObject var updater: UpdateManager
+    @ObservedObject var clipboardStore: ClipboardHistoryStore
 
     var body: some View {
         ZStack {
@@ -244,6 +251,8 @@ struct MainDashboardView: View {
                             screenshotSettingsContent
                         case .radialMenu:
                             radialMenuContent
+                        case .clipboardHistory:
+                            clipboardHistoryContent
                         case .appearance:
                             appearanceAndPermissionContent
                         case .logs:
@@ -1817,6 +1826,188 @@ struct MainDashboardView: View {
                 .bentoCard()
                 .frame(maxWidth: .infinity)
             }
+        }
+    }
+
+    // MARK: - Clipboard History Settings Content
+
+    private var clipboardHistoryContent: some View {
+        let isRecClipboard = (vm.recordingTarget == .clipboardGlobal)
+        let usedMB = Double(clipboardStore.totalStorageBytes) / (1024.0 * 1024.0)
+
+        return VStack(alignment: .leading, spacing: 16) {
+            // Card 1: Enable, Hotkey & Default Paste Mode
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("剪贴板历史（Clipboard History）")
+                            .font(.system(size: 16, weight: .semibold, design: .serif))
+                            .foregroundColor(LuminaTheme.textPrimary)
+                        Text("后台轻量监听系统剪贴板（自动去重），支持纯文本、富文本与图片预览，按下快捷键在光标旁呼出毛玻璃浮窗。")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(LuminaTheme.textSecondary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $settings.enableClipboardHistory)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
+
+                Divider().opacity(0.25)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("剪贴板浮窗呼出快捷键")
+                            .font(.system(size: 13, weight: .medium))
+                        Text("支持自由录制任意组合键、F 键或绑定到鼠标侧键宏，随时在光标旁一键呼出。")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(LuminaTheme.textSecondary)
+                    }
+                    Spacer()
+
+                    let recText = vm.recordingPreviewModifiers.isEmpty
+                        ? "请按下快捷键 (ESC 取消)..."
+                        : "\(vm.recordingPreviewModifiers) + ..."
+                    Text(isRecClipboard ? recText : settings.clipboardHotkey.displayString)
+                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                        .foregroundColor(isRecClipboard ? LuminaTheme.coral : LuminaTheme.textPrimary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.white)
+                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(isRecClipboard ? LuminaTheme.coral : Color.black.opacity(0.1), lineWidth: 1))
+                        )
+
+                    Button(action: {
+                        if isRecClipboard {
+                            vm.stopHotkeyRecording()
+                        } else {
+                            vm.startHotkeyRecording(target: .clipboardGlobal)
+                        }
+                    }) {
+                        Text(isRecClipboard ? "取消" : "修改快捷键")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(Capsule().fill(LuminaTheme.activeTileGradient))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Divider().opacity(0.25)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("富文本条目默认粘贴方式")
+                            .font(.system(size: 13, weight: .medium))
+                        Text("悬停在富文本卡片上时，右上角会显示极简按钮支持单次切换为另一种模式粘贴。")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(LuminaTheme.textSecondary)
+                    }
+                    Spacer()
+                    Picker("", selection: $settings.clipboardDefaultPasteMode) {
+                        ForEach(ClipboardPasteMode.allCases) { mode in
+                            Text("默认\(mode.rawValue)").tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 190)
+                }
+
+                HStack {
+                    Text("支持键盘 ↑ ↓ 选择、回车直接粘贴并收起，点击外部自动关闭，右上角图钉可固定。")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(LuminaTheme.textSecondary)
+                    Spacer()
+                    Button("立即呼出剪贴板浮窗") {
+                        ClipboardPanelController.shared.show()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            .bentoCard()
+
+            // Card 2: Storage Policy & Quota Management
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("存储策略与空间上限")
+                            .font(.system(size: 16, weight: .semibold, design: .serif))
+                            .foregroundColor(LuminaTheme.textPrimary)
+                        Text(String(format: "当前已保存 %d 条记录 · 已占用 %.2f MB 磁盘空间（超限时自动按最旧优先清理）", clipboardStore.items.count, usedMB))
+                            .font(.system(size: 11.5))
+                            .foregroundColor(LuminaTheme.textSecondary)
+                    }
+                    Spacer()
+                    Button(action: {
+                        clipboardStore.clearAll()
+                        ToastHUD.shared.show("已清空全部剪贴板历史")
+                    }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 11.5))
+                            Text("一键清空")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .foregroundColor(LuminaTheme.coral)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(LuminaTheme.coral.opacity(0.11)))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                HStack(spacing: 24) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("最大保留条数（上限 500 条）")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(LuminaTheme.textPrimary)
+                        HStack(spacing: 8) {
+                            Picker("", selection: $settings.clipboardMaxItems) {
+                                Text("50 条").tag(50)
+                                Text("100 条").tag(100)
+                                Text("200 条").tag(200)
+                                Text("300 条").tag(300)
+                                Text("500 条").tag(500)
+                            }
+                            .labelsHidden()
+                            .frame(width: 110)
+
+                            Stepper("\(settings.clipboardMaxItems) 条", value: $settings.clipboardMaxItems, in: 20...500, step: 20)
+                                .font(.system(size: 12))
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("最大占用存储空间（MB）")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(LuminaTheme.textPrimary)
+                        HStack(spacing: 8) {
+                            Picker("", selection: $settings.clipboardMaxStorageMB) {
+                                Text("20 MB").tag(20)
+                                Text("50 MB").tag(50)
+                                Text("100 MB").tag(100)
+                                Text("200 MB").tag(200)
+                                Text("500 MB").tag(500)
+                            }
+                            .labelsHidden()
+                            .frame(width: 110)
+
+                            TextField("100", value: $settings.clipboardMaxStorageMB, format: .number)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 68)
+                            Text("MB")
+                                .font(.system(size: 12))
+                                .foregroundColor(LuminaTheme.textSecondary)
+                        }
+                    }
+                    Spacer()
+                }
+            }
+            .bentoCard()
         }
     }
 

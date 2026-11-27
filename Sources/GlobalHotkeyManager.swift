@@ -6,11 +6,13 @@ final class GlobalHotkeyManager {
 
     private var screenshotHotKeyRef: EventHotKeyRef?
     private var radialHotKeyRef: EventHotKeyRef?
+    private var clipboardHotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
 
     private var screenshotCallback: (() -> Void)?
     private var radialPressedCallback: (() -> Void)?
     private var radialReleasedCallback: (() -> Void)?
+    private var clipboardPressedCallback: (() -> Void)?
 
     private let signature: OSType = 0x4C4D4E41 // 'LMNA'
 
@@ -27,24 +29,34 @@ final class GlobalHotkeyManager {
             name: .luminaRadialHotkeyDidChange,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleClipboardHotkeyChanged(_:)),
+            name: .luminaClipboardHotkeyDidChange,
+            object: nil
+        )
     }
 
     func start(
         onScreenshot: @escaping () -> Void,
         onRadialPressed: @escaping () -> Void,
-        onRadialReleased: @escaping () -> Void
+        onRadialReleased: @escaping () -> Void,
+        onClipboardPressed: @escaping () -> Void
     ) {
         self.screenshotCallback = onScreenshot
         self.radialPressedCallback = onRadialPressed
         self.radialReleasedCallback = onRadialReleased
+        self.clipboardPressedCallback = onClipboardPressed
         installEventHandlerIfNeeded()
         registerScreenshot(config: SettingsStore.shared.screenshotHotkey)
         registerRadial(config: SettingsStore.shared.radialHotkey)
+        registerClipboard(config: SettingsStore.shared.clipboardHotkey)
     }
 
     func stop() {
         unregisterScreenshot()
         unregisterRadial()
+        unregisterClipboard()
     }
 
     @objc private func handleScreenshotHotkeyChanged(_ notification: Notification) {
@@ -55,6 +67,11 @@ final class GlobalHotkeyManager {
     @objc private func handleRadialHotkeyChanged(_ notification: Notification) {
         let config = (notification.object as? HotkeyConfig) ?? SettingsStore.shared.radialHotkey
         registerRadial(config: config)
+    }
+
+    @objc private func handleClipboardHotkeyChanged(_ notification: Notification) {
+        let config = (notification.object as? HotkeyConfig) ?? SettingsStore.shared.clipboardHotkey
+        registerClipboard(config: config)
     }
 
     private func installEventHandlerIfNeeded() {
@@ -93,6 +110,10 @@ final class GlobalHotkeyManager {
                     DispatchQueue.main.async {
                         GlobalHotkeyManager.shared.radialReleasedCallback?()
                     }
+                }
+            } else if hotKeyID.id == 3 && eventKind == UInt32(kEventHotKeyPressed) {
+                DispatchQueue.main.async {
+                    GlobalHotkeyManager.shared.clipboardPressedCallback?()
                 }
             }
             return noErr
@@ -147,6 +168,24 @@ final class GlobalHotkeyManager {
         }
     }
 
+    func registerClipboard(config: HotkeyConfig) {
+        unregisterClipboard()
+        let hotKeyID = EventHotKeyID(signature: signature, id: 3)
+        let status = RegisterEventHotKey(
+            config.keyCode,
+            config.modifiers,
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &clipboardHotKeyRef
+        )
+        if status == noErr {
+            AppLogger.shared.info("Registered global clipboard history hotkey: \(config.displayString)")
+        } else {
+            AppLogger.shared.error("Failed to register clipboard hotkey \(config.displayString) (status: \(status))")
+        }
+    }
+
     private func unregisterScreenshot() {
         if let ref = screenshotHotKeyRef {
             UnregisterEventHotKey(ref)
@@ -158,6 +197,13 @@ final class GlobalHotkeyManager {
         if let ref = radialHotKeyRef {
             UnregisterEventHotKey(ref)
             radialHotKeyRef = nil
+        }
+    }
+
+    private func unregisterClipboard() {
+        if let ref = clipboardHotKeyRef {
+            UnregisterEventHotKey(ref)
+            clipboardHotKeyRef = nil
         }
     }
 }

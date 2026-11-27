@@ -125,6 +125,7 @@ swiftc \
     "${PROJECT_DIR}/Sources/TextSelectionMonitor.swift" \
     "${PROJECT_DIR}/Sources/ScreenCaptureManager.swift" \
     "${PROJECT_DIR}/Sources/RadialMenuManager.swift" \
+    "${PROJECT_DIR}/Sources/ClipboardHistoryManager.swift" \
     "${PROJECT_DIR}/Sources/FloatingPanels.swift" \
     "${PROJECT_DIR}/Sources/DesignSystem.swift" \
     "${PROJECT_DIR}/Sources/DashboardViews.swift" \

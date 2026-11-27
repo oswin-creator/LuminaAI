@@ -56,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         GlobalHotkeyManager.shared.stop()
         TextSelectionMonitor.shared.stop()
+        ClipboardHistoryStore.shared.stopMonitoring()
         AppLogger.shared.info("LuminaAI terminated")
     }
 
@@ -104,8 +105,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             },
             onRadialReleased: {
                 RadialMenuManager.shared.handleHotkeyReleased()
+            },
+            onClipboardPressed: {
+                ClipboardPanelController.shared.toggle()
             }
         )
+
+        ClipboardHistoryStore.shared.startMonitoring()
 
         TextSelectionMonitor.shared.onTextSelected = { selectedText, mouseLocation in
             FloatingPanelController.shared.showSelectionCapsule(for: selectedText, near: mouseLocation)
@@ -254,7 +260,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 usage: UsageStore.shared,
                 permissions: PermissionManager.shared,
                 logger: AppLogger.shared,
-                updater: UpdateManager.shared
+                updater: UpdateManager.shared,
+                clipboardStore: ClipboardHistoryStore.shared
             )
             win.contentView = NSHostingView(rootView: rootView)
             self.mainWindow = win

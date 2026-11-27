@@ -93,6 +93,41 @@ enum FeatureKind: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+// MARK: - Clipboard History Models
+
+enum ClipboardPasteMode: String, CaseIterable, Codable, Identifiable {
+    case richText = "富文本"
+    case plainText = "纯文本"
+
+    var id: String { rawValue }
+}
+
+enum ClipboardItemKind: String, Codable {
+    case plainText = "plainText"
+    case richText = "richText"
+    case image = "image"
+}
+
+enum ClipboardFilterMode: String, CaseIterable, Identifiable {
+    case all = "全部"
+    case text = "文本"
+    case image = "图片"
+
+    var id: String { rawValue }
+}
+
+struct ClipboardHistoryItem: Codable, Equatable, Identifiable {
+    var id: UUID
+    var kind: ClipboardItemKind
+    var plainText: String
+    var rtfFilename: String?
+    var imageFilename: String?
+    var thumbFilename: String?
+    var contentHash: String
+    var byteSize: Int64
+    var createdAt: Date
+}
+
 // MARK: - Radial Menu Models
 
 enum RadialActionType: String, CaseIterable, Codable, Identifiable {
@@ -432,6 +467,12 @@ struct HotkeyConfig: Codable, Equatable {
         modifiers: UInt32(optionKey)
     )
 
+    /// Default Clipboard History hotkey: Option + V
+    static let defaultClipboardHistory = HotkeyConfig(
+        keyCode: UInt32(kVK_ANSI_V),
+        modifiers: UInt32(optionKey)
+    )
+
     var displayString: String {
         var parts: [String] = []
         if (modifiers & UInt32(controlKey)) != 0 { parts.append("⌃") }
@@ -576,6 +617,34 @@ final class SettingsStore: ObservableObject {
     @Published var radialSlots: [RadialSlot] {
         didSet { save() }
     }
+    @Published var enableClipboardHistory: Bool {
+        didSet { save() }
+    }
+    @Published var clipboardHotkey: HotkeyConfig {
+        didSet {
+            save()
+            NotificationCenter.default.post(name: .luminaClipboardHotkeyDidChange, object: clipboardHotkey)
+        }
+    }
+    @Published var clipboardDefaultPasteMode: ClipboardPasteMode {
+        didSet { save() }
+    }
+    @Published var clipboardMaxItems: Int {
+        didSet {
+            let clamped = min(500, max(20, clipboardMaxItems))
+            if clamped != clipboardMaxItems { clipboardMaxItems = clamped; return }
+            save()
+            NotificationCenter.default.post(name: .luminaClipboardPolicyDidChange, object: nil)
+        }
+    }
+    @Published var clipboardMaxStorageMB: Int {
+        didSet {
+            let clamped = min(2048, max(10, clipboardMaxStorageMB))
+            if clamped != clipboardMaxStorageMB { clipboardMaxStorageMB = clamped; return }
+            save()
+            NotificationCenter.default.post(name: .luminaClipboardPolicyDidChange, object: nil)
+        }
+    }
     @Published var translateSourceLang: TranslateLanguage {
         didSet { save() }
     }
@@ -616,6 +685,11 @@ final class SettingsStore: ObservableObject {
         var enableRadialMenu: Bool?
         var radialHotkey: HotkeyConfig?
         var radialSlots: [RadialSlot]?
+        var enableClipboardHistory: Bool?
+        var clipboardHotkey: HotkeyConfig?
+        var clipboardDefaultPasteMode: ClipboardPasteMode?
+        var clipboardMaxItems: Int?
+        var clipboardMaxStorageMB: Int?
         var translateSourceLang: TranslateLanguage?
         var translateTargetLang: TranslateLanguage?
         var logRetentionPeriod: LogRetentionPeriod?
@@ -647,6 +721,11 @@ final class SettingsStore: ObservableObject {
             self.enableRadialMenu = decoded.enableRadialMenu ?? true
             self.radialHotkey = decoded.radialHotkey ?? .defaultRadialMenu
             self.radialSlots = decoded.radialSlots ?? RadialSlot.defaultSlots
+            self.enableClipboardHistory = decoded.enableClipboardHistory ?? true
+            self.clipboardHotkey = decoded.clipboardHotkey ?? .defaultClipboardHistory
+            self.clipboardDefaultPasteMode = decoded.clipboardDefaultPasteMode ?? .richText
+            self.clipboardMaxItems = min(500, max(20, decoded.clipboardMaxItems ?? 200))
+            self.clipboardMaxStorageMB = min(2048, max(10, decoded.clipboardMaxStorageMB ?? 100))
             self.translateSourceLang = decoded.translateSourceLang ?? .auto
             self.translateTargetLang = decoded.translateTargetLang ?? .chinese
             self.logRetentionPeriod = decoded.logRetentionPeriod ?? .oneWeek
@@ -670,6 +749,11 @@ final class SettingsStore: ObservableObject {
             self.enableRadialMenu = true
             self.radialHotkey = .defaultRadialMenu
             self.radialSlots = RadialSlot.defaultSlots
+            self.enableClipboardHistory = true
+            self.clipboardHotkey = .defaultClipboardHistory
+            self.clipboardDefaultPasteMode = .richText
+            self.clipboardMaxItems = 200
+            self.clipboardMaxStorageMB = 100
             self.translateSourceLang = .auto
             self.translateTargetLang = .chinese
             self.logRetentionPeriod = .oneWeek
@@ -931,6 +1015,11 @@ final class SettingsStore: ObservableObject {
             enableRadialMenu: enableRadialMenu,
             radialHotkey: radialHotkey,
             radialSlots: radialSlots,
+            enableClipboardHistory: enableClipboardHistory,
+            clipboardHotkey: clipboardHotkey,
+            clipboardDefaultPasteMode: clipboardDefaultPasteMode,
+            clipboardMaxItems: clipboardMaxItems,
+            clipboardMaxStorageMB: clipboardMaxStorageMB,
             translateSourceLang: translateSourceLang,
             translateTargetLang: translateTargetLang,
             logRetentionPeriod: logRetentionPeriod,
@@ -949,6 +1038,8 @@ extension Notification.Name {
     static let luminaPresenceDidChange = Notification.Name("luminaPresenceDidChange")
     static let luminaHotkeyDidChange = Notification.Name("luminaHotkeyDidChange")
     static let luminaRadialHotkeyDidChange = Notification.Name("luminaRadialHotkeyDidChange")
+    static let luminaClipboardHotkeyDidChange = Notification.Name("luminaClipboardHotkeyDidChange")
+    static let luminaClipboardPolicyDidChange = Notification.Name("luminaClipboardPolicyDidChange")
     static let luminaTriggerScreenshot = Notification.Name("luminaTriggerScreenshot")
     static let luminaOpenMainWindow = Notification.Name("luminaOpenMainWindow")
     static let luminaShowPermissionGuide = Notification.Name("luminaShowPermissionGuide")
