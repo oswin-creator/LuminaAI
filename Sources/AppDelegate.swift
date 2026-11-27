@@ -95,9 +95,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func setupMonitorsAndHotkeys() {
-        GlobalHotkeyManager.shared.start {
-            ScreenCaptureManager.shared.beginInteractiveCapture()
-        }
+        GlobalHotkeyManager.shared.start(
+            onScreenshot: {
+                ScreenCaptureManager.shared.beginInteractiveCapture()
+            },
+            onRadialPressed: {
+                RadialMenuManager.shared.handleHotkeyPressed()
+            },
+            onRadialReleased: {
+                RadialMenuManager.shared.handleHotkeyReleased()
+            }
+        )
 
         TextSelectionMonitor.shared.onTextSelected = { selectedText, mouseLocation in
             FloatingPanelController.shared.showSelectionCapsule(for: selectedText, near: mouseLocation)

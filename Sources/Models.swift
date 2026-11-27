@@ -93,6 +93,94 @@ enum FeatureKind: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+// MARK: - Radial Menu Models
+
+enum RadialActionType: String, CaseIterable, Codable, Identifiable {
+    case launchApp = "launchApp"
+    case sendShortcut = "sendShortcut"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .launchApp: return "打开 / 切换应用"
+        case .sendShortcut: return "模拟快捷键"
+        }
+    }
+}
+
+enum RadialIconType: String, CaseIterable, Codable, Identifiable {
+    case appIcon = "appIcon"
+    case sfSymbol = "sfSymbol"
+    case customImage = "customImage"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .appIcon: return "应用原生图标"
+        case .sfSymbol: return "系统符号"
+        case .customImage: return "自定义图片"
+        }
+    }
+}
+
+struct RadialSlot: Codable, Equatable, Identifiable {
+    var id: UUID
+    var title: String
+    var actionType: RadialActionType
+    var appPath: String
+    var shortcut: HotkeyConfig
+    var iconType: RadialIconType
+    var symbolName: String
+    var customIconFilename: String?
+
+    static var defaultSlots: [RadialSlot] {
+        [
+            RadialSlot(
+                id: UUID(),
+                title: "访达",
+                actionType: .launchApp,
+                appPath: "/System/Library/CoreServices/Finder.app",
+                shortcut: HotkeyConfig(keyCode: UInt32(kVK_ANSI_C), modifiers: UInt32(cmdKey)),
+                iconType: .appIcon,
+                symbolName: "folder",
+                customIconFilename: nil
+            ),
+            RadialSlot(
+                id: UUID(),
+                title: "Safari",
+                actionType: .launchApp,
+                appPath: "/Applications/Safari.app",
+                shortcut: HotkeyConfig(keyCode: UInt32(kVK_ANSI_C), modifiers: UInt32(cmdKey)),
+                iconType: .appIcon,
+                symbolName: "safari",
+                customIconFilename: nil
+            ),
+            RadialSlot(
+                id: UUID(),
+                title: "复制",
+                actionType: .sendShortcut,
+                appPath: "",
+                shortcut: HotkeyConfig(keyCode: UInt32(kVK_ANSI_C), modifiers: UInt32(cmdKey)),
+                iconType: .sfSymbol,
+                symbolName: "doc.on.doc",
+                customIconFilename: nil
+            ),
+            RadialSlot(
+                id: UUID(),
+                title: "粘贴",
+                actionType: .sendShortcut,
+                appPath: "",
+                shortcut: HotkeyConfig(keyCode: UInt32(kVK_ANSI_V), modifiers: UInt32(cmdKey)),
+                iconType: .sfSymbol,
+                symbolName: "doc.on.clipboard",
+                customIconFilename: nil
+            )
+        ]
+    }
+}
+
 // MARK: - Selection Capsule Action Item
 
 enum CapsuleActionItem: String, CaseIterable, Codable, Identifiable {
@@ -330,6 +418,12 @@ struct HotkeyConfig: Codable, Equatable {
         modifiers: UInt32(optionKey | shiftKey)
     )
 
+    /// Default Radial Menu hold hotkey: Option + R
+    static let defaultRadialMenu = HotkeyConfig(
+        keyCode: UInt32(kVK_ANSI_R),
+        modifiers: UInt32(optionKey)
+    )
+
     var displayString: String {
         var parts: [String] = []
         if (modifiers & UInt32(controlKey)) != 0 { parts.append("⌃") }
@@ -462,6 +556,18 @@ final class SettingsStore: ObservableObject {
             NotificationCenter.default.post(name: .luminaHotkeyDidChange, object: screenshotHotkey)
         }
     }
+    @Published var enableRadialMenu: Bool {
+        didSet { save() }
+    }
+    @Published var radialHotkey: HotkeyConfig {
+        didSet {
+            save()
+            NotificationCenter.default.post(name: .luminaRadialHotkeyDidChange, object: radialHotkey)
+        }
+    }
+    @Published var radialSlots: [RadialSlot] {
+        didSet { save() }
+    }
     @Published var translateSourceLang: TranslateLanguage {
         didSet { save() }
     }
@@ -499,6 +605,9 @@ final class SettingsStore: ObservableObject {
         var useClipboardFallbackForSelection: Bool
         var useNativeVisionOCRFirst: Bool
         var screenshotHotkey: HotkeyConfig
+        var enableRadialMenu: Bool?
+        var radialHotkey: HotkeyConfig?
+        var radialSlots: [RadialSlot]?
         var translateSourceLang: TranslateLanguage?
         var translateTargetLang: TranslateLanguage?
         var logRetentionPeriod: LogRetentionPeriod?
@@ -527,6 +636,9 @@ final class SettingsStore: ObservableObject {
             self.useClipboardFallbackForSelection = decoded.useClipboardFallbackForSelection
             self.useNativeVisionOCRFirst = decoded.useNativeVisionOCRFirst
             self.screenshotHotkey = decoded.screenshotHotkey
+            self.enableRadialMenu = decoded.enableRadialMenu ?? true
+            self.radialHotkey = decoded.radialHotkey ?? .defaultRadialMenu
+            self.radialSlots = decoded.radialSlots ?? RadialSlot.defaultSlots
             self.translateSourceLang = decoded.translateSourceLang ?? .auto
             self.translateTargetLang = decoded.translateTargetLang ?? .chinese
             self.logRetentionPeriod = decoded.logRetentionPeriod ?? .oneWeek
@@ -547,6 +659,9 @@ final class SettingsStore: ObservableObject {
             self.useClipboardFallbackForSelection = true
             self.useNativeVisionOCRFirst = true
             self.screenshotHotkey = .defaultScreenshot
+            self.enableRadialMenu = true
+            self.radialHotkey = .defaultRadialMenu
+            self.radialSlots = RadialSlot.defaultSlots
             self.translateSourceLang = .auto
             self.translateTargetLang = .chinese
             self.logRetentionPeriod = .oneWeek
@@ -636,6 +751,80 @@ final class SettingsStore: ObservableObject {
         let item = list.remove(at: index)
         list.insert(item, at: target)
         capsuleActions = list
+    }
+
+    // MARK: - Radial Menu Slot Helpers
+
+    var radialIconsDirectoryURL: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let dir = appSupport.appendingPathComponent("LuminaAI/radial_icons", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    func addRadialSlot() -> RadialSlot {
+        let newSlot = RadialSlot(
+            id: UUID(),
+            title: "新槽位",
+            actionType: .launchApp,
+            appPath: "/System/Applications/Notes.app",
+            shortcut: HotkeyConfig(keyCode: UInt32(kVK_ANSI_C), modifiers: UInt32(cmdKey)),
+            iconType: .appIcon,
+            symbolName: "star",
+            customIconFilename: nil
+        )
+        radialSlots.append(newSlot)
+        return newSlot
+    }
+
+    func updateRadialSlot(_ slot: RadialSlot) {
+        if let idx = radialSlots.firstIndex(where: { $0.id == slot.id }) {
+            radialSlots[idx] = slot
+        }
+    }
+
+    func deleteRadialSlot(id: UUID) {
+        if let slot = radialSlots.first(where: { $0.id == id }), let fname = slot.customIconFilename {
+            try? FileManager.default.removeItem(at: radialIconsDirectoryURL.appendingPathComponent(fname))
+        }
+        radialSlots.removeAll { $0.id == id }
+    }
+
+    func moveRadialSlot(at index: Int, offset: Int) {
+        let target = index + offset
+        guard index >= 0, index < radialSlots.count, target >= 0, target < radialSlots.count else { return }
+        var list = radialSlots
+        let item = list.remove(at: index)
+        list.insert(item, at: target)
+        radialSlots = list
+    }
+
+    func saveCustomRadialIcon(from sourceURL: URL, for slotID: UUID) -> String? {
+        guard let nsImg = NSImage(contentsOf: sourceURL) else { return nil }
+        let targetSize = NSSize(width: 128, height: 128)
+        let resized = NSImage(size: targetSize)
+        resized.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        nsImg.draw(in: NSRect(origin: .zero, size: targetSize), from: .zero, operation: .copy, fraction: 1.0)
+        resized.unlockFocus()
+        guard let tiff = resized.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff),
+              let png = rep.representation(using: .png, properties: [:]) else { return nil }
+        let filename = "\(slotID.uuidString).png"
+        let dest = radialIconsDirectoryURL.appendingPathComponent(filename)
+        do {
+            try png.write(to: dest, options: .atomic)
+            return filename
+        } catch {
+            AppLogger.shared.error("Failed to save custom radial icon: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    func loadCustomRadialIcon(filename: String?) -> NSImage? {
+        guard let fname = filename, !fname.isEmpty else { return nil }
+        let url = radialIconsDirectoryURL.appendingPathComponent(fname)
+        return NSImage(contentsOf: url)
     }
 
     func resetCapsuleActions() {
@@ -731,6 +920,9 @@ final class SettingsStore: ObservableObject {
             useClipboardFallbackForSelection: useClipboardFallbackForSelection,
             useNativeVisionOCRFirst: useNativeVisionOCRFirst,
             screenshotHotkey: screenshotHotkey,
+            enableRadialMenu: enableRadialMenu,
+            radialHotkey: radialHotkey,
+            radialSlots: radialSlots,
             translateSourceLang: translateSourceLang,
             translateTargetLang: translateTargetLang,
             logRetentionPeriod: logRetentionPeriod,
@@ -748,6 +940,7 @@ final class SettingsStore: ObservableObject {
 extension Notification.Name {
     static let luminaPresenceDidChange = Notification.Name("luminaPresenceDidChange")
     static let luminaHotkeyDidChange = Notification.Name("luminaHotkeyDidChange")
+    static let luminaRadialHotkeyDidChange = Notification.Name("luminaRadialHotkeyDidChange")
     static let luminaTriggerScreenshot = Notification.Name("luminaTriggerScreenshot")
     static let luminaOpenMainWindow = Notification.Name("luminaOpenMainWindow")
     static let luminaShowPermissionGuide = Notification.Name("luminaShowPermissionGuide")

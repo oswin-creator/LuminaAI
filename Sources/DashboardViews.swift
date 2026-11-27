@@ -9,6 +9,7 @@ enum DashboardTab: String, CaseIterable, Identifiable {
     case apiConfig = "API 配置"
     case selection = "划词"
     case screenshot = "截屏"
+    case radialMenu = "快捷轮盘"
     case appearance = "外观权限"
     case logs = "日志"
 
@@ -20,10 +21,17 @@ enum DashboardTab: String, CaseIterable, Identifiable {
         case .apiConfig: return "cpu"
         case .selection: return "text.cursor"
         case .screenshot: return "viewfinder"
+        case .radialMenu: return "circle.hexagongrid"
         case .appearance: return "slider.horizontal.3"
         case .logs: return "doc.text.magnifyingglass"
         }
     }
+}
+
+enum HotkeyRecordingTarget: Equatable {
+    case screenshot
+    case radialGlobal
+    case radialSlot(UUID)
 }
 
 // MARK: - Dashboard ViewModel (ObservableObject, ZERO @State)
@@ -57,11 +65,18 @@ final class DashboardViewModel: ObservableObject {
     @Published var pricingOutputText: String = "2.0"
     @Published var pricingCurrency: String = "¥"
 
-    // Hotkey Recorder State
-    @Published var isRecordingHotkey: Bool = false
+    // Radial Menu Editor State
+    @Published var selectedRadialSlotID: UUID? = SettingsStore.shared.radialSlots.first?.id
+
+    // Hotkey Recorder State (shared across screenshot, radial global, and radial slot)
+    @Published var recordingTarget: HotkeyRecordingTarget? = nil
     @Published var recordingPreviewModifiers: String = ""
     private var hotkeyMonitor: Any?
     private var flagsMonitor: Any?
+
+    var isRecordingHotkey: Bool {
+        recordingTarget == .screenshot
+    }
 
     init() {
         syncPricingFields(for: .translate)
@@ -123,9 +138,9 @@ final class DashboardViewModel: ObservableObject {
         }
     }
 
-    func startHotkeyRecording() {
+    func startHotkeyRecording(target: HotkeyRecordingTarget = .screenshot) {
         stopHotkeyRecording()
-        isRecordingHotkey = true
+        recordingTarget = target
         recordingPreviewModifiers = ""
 
         flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { [weak self] event in
@@ -141,23 +156,35 @@ final class DashboardViewModel: ObservableObject {
         }
 
         hotkeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-            guard let self = self else { return event }
+            guard let self = self, let activeTarget = self.recordingTarget else { return event }
             if event.keyCode == 53 { // Esc cancels
                 self.stopHotkeyRecording()
                 return nil
             }
-            // Allow ANY combination of 0, 1, 2, 3, or 4 modifiers + any key!
             let mods = HotkeyConfig.carbonModifiers(from: event.modifierFlags)
             let newHotkey = HotkeyConfig(keyCode: UInt32(event.keyCode), modifiers: mods)
-            SettingsStore.shared.screenshotHotkey = newHotkey
+
+            switch activeTarget {
+            case .screenshot:
+                SettingsStore.shared.screenshotHotkey = newHotkey
+                ToastHUD.shared.show("截屏快捷键已更新为 \(newHotkey.displayString)")
+            case .radialGlobal:
+                SettingsStore.shared.radialHotkey = newHotkey
+                ToastHUD.shared.show("快捷轮盘快捷键已更新为 \(newHotkey.displayString)")
+            case .radialSlot(let slotID):
+                if var slot = SettingsStore.shared.radialSlots.first(where: { $0.id == slotID }) {
+                    slot.shortcut = newHotkey
+                    SettingsStore.shared.updateRadialSlot(slot)
+                    ToastHUD.shared.show("槽位「\(slot.title)」快捷键已设为 \(newHotkey.displayString)")
+                }
+            }
             self.stopHotkeyRecording()
-            ToastHUD.shared.show("截屏快捷键已更新为 \(newHotkey.displayString)")
             return nil
         }
     }
 
     func stopHotkeyRecording() {
-        isRecordingHotkey = false
+        recordingTarget = nil
         recordingPreviewModifiers = ""
         if let m = hotkeyMonitor {
             NSEvent.removeMonitor(m)
@@ -215,6 +242,8 @@ struct MainDashboardView: View {
                             selectionSettingsContent
                         case .screenshot:
                             screenshotSettingsContent
+                        case .radialMenu:
+                            radialMenuContent
                         case .appearance:
                             appearanceAndPermissionContent
                         case .logs:
@@ -268,27 +297,53 @@ struct MainDashboardView: View {
             }
             .padding(.top, 6)
 
-            // 2x3 Navigation Bento Grid
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                ForEach(DashboardTab.allCases) { tab in
-                    let isSelected = (vm.selectedTab == tab)
-                    Button(action: { vm.selectedTab = tab }) {
-                        VStack(spacing: 7) {
-                            Image(systemName: tab.symbol)
-                                .font(.system(size: 15, weight: .medium))
-                            Text(tab.rawValue)
-                                .font(.system(size: 11.5, weight: .medium))
-                        }
-                        .foregroundColor(isSelected ? .white : LuminaTheme.textPrimary)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 62)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(isSelected ? LuminaTheme.activeTileGradient : LinearGradient(colors: [Color(hex: "#F6F6F7"), Color(hex: "#F6F6F7")], startPoint: .top, endPoint: .bottom))
-                                .shadow(color: Color.black.opacity(isSelected ? 0.14 : 0.03), radius: 6, x: 0, y: 3)
-                        )
+            // Full-width Overview Hero Tile + 2x3 Module Navigation Bento Grid
+            VStack(spacing: 10) {
+                let isOverview = (vm.selectedTab == .overview)
+                Button(action: { vm.selectedTab = .overview }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: DashboardTab.overview.symbol)
+                            .font(.system(size: 14, weight: .medium))
+                        Text(DashboardTab.overview.rawValue)
+                            .font(.system(size: 12.5, weight: .semibold))
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .opacity(0.6)
                     }
-                    .buttonStyle(.plain)
+                    .foregroundColor(isOverview ? .white : LuminaTheme.textPrimary)
+                    .padding(.horizontal, 14)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 40)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(isOverview ? LuminaTheme.activeTileGradient : LinearGradient(colors: [Color(hex: "#F6F6F7"), Color(hex: "#F6F6F7")], startPoint: .top, endPoint: .bottom))
+                            .shadow(color: Color.black.opacity(isOverview ? 0.14 : 0.03), radius: 6, x: 0, y: 3)
+                    )
+                }
+                .buttonStyle(.plain)
+
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                    ForEach(DashboardTab.allCases.filter { $0 != .overview }) { tab in
+                        let isSelected = (vm.selectedTab == tab)
+                        Button(action: { vm.selectedTab = tab }) {
+                            VStack(spacing: 6) {
+                                Image(systemName: tab.symbol)
+                                    .font(.system(size: 14.5, weight: .medium))
+                                Text(tab.rawValue)
+                                    .font(.system(size: 11.5, weight: .medium))
+                            }
+                            .foregroundColor(isSelected ? .white : LuminaTheme.textPrimary)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 58)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(isSelected ? LuminaTheme.activeTileGradient : LinearGradient(colors: [Color(hex: "#F6F6F7"), Color(hex: "#F6F6F7")], startPoint: .top, endPoint: .bottom))
+                                    .shadow(color: Color.black.opacity(isSelected ? 0.14 : 0.03), radius: 6, x: 0, y: 3)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
 
@@ -1337,6 +1392,395 @@ struct MainDashboardView: View {
                 }
             }
             .bentoCard()
+        }
+    }
+
+    // MARK: - Radial Menu Management Content
+
+    private var radialMenuContent: some View {
+        let curatedSymbols = [
+            "doc.on.doc", "doc.on.clipboard", "scissors", "arrow.uturn.backward",
+            "magnifyingglass", "terminal", "folder", "safari",
+            "camera", "sparkles", "paperplane", "bookmark",
+            "play.fill", "speaker.wave.2", "lock", "gearshape"
+        ]
+        let isRecordingGlobal = (vm.recordingTarget == .radialGlobal)
+
+        return VStack(alignment: .leading, spacing: 16) {
+            // Card 1: Enable & Hold-Hotkey Recorder
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("快捷轮盘（Radial Menu）")
+                            .font(.system(size: 16, weight: .semibold, design: .serif))
+                            .foregroundColor(LuminaTheme.textPrimary)
+                        Text("按住专属快捷键在鼠标四周弹出毛玻璃圆环，滑动选中槽位后松开即触发，停在中心松手取消。")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(LuminaTheme.textSecondary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $settings.enableRadialMenu)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                }
+
+                Divider().opacity(0.25)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("轮盘按住呼出快捷键")
+                            .font(.system(size: 13, weight: .medium))
+                        Text("兼容 F1–F12 单键、任意多修饰键组合及鼠标侧键宏绑定。")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(LuminaTheme.textSecondary)
+                    }
+                    Spacer()
+
+                    let recText = vm.recordingPreviewModifiers.isEmpty
+                        ? "请按下快捷键 (ESC 取消)..."
+                        : "\(vm.recordingPreviewModifiers) + ..."
+                    Text(isRecordingGlobal ? recText : settings.radialHotkey.displayString)
+                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                        .foregroundColor(isRecordingGlobal ? LuminaTheme.coral : LuminaTheme.textPrimary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.white)
+                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(isRecordingGlobal ? LuminaTheme.coral : Color.black.opacity(0.1), lineWidth: 1))
+                        )
+
+                    Button(action: {
+                        if isRecordingGlobal {
+                            vm.stopHotkeyRecording()
+                        } else {
+                            vm.startHotkeyRecording(target: .radialGlobal)
+                        }
+                    }) {
+                        Text(isRecordingGlobal ? "取消" : "修改快捷键")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(Capsule().fill(LuminaTheme.activeTileGradient))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .bentoCard()
+
+            // Card 2 & 3 side-by-side: Slot List + Selected Slot Detail Editor
+            HStack(alignment: .top, spacing: 16) {
+                // Left: Slot list (add, delete, reorder)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("轮盘槽位（\(settings.radialSlots.count) 个）")
+                            .font(.system(size: 15, weight: .semibold, design: .serif))
+                            .foregroundColor(LuminaTheme.textPrimary)
+                        Spacer()
+                        Button(action: {
+                            let created = settings.addRadialSlot()
+                            vm.selectedRadialSlotID = created.id
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 11, weight: .bold))
+                                Text("新增槽位")
+                                    .font(.system(size: 11.5, weight: .medium))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(LuminaTheme.activeTileGradient))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if settings.radialSlots.isEmpty {
+                        Text("暂无槽位，点击右上角「新增槽位」添加常用应用或快捷键。")
+                            .font(.system(size: 12))
+                            .foregroundColor(LuminaTheme.textSecondary)
+                            .padding(.vertical, 24)
+                    } else {
+                        VStack(spacing: 7) {
+                            ForEach(Array(settings.radialSlots.enumerated()), id: \.element.id) { idx, slot in
+                                let isSelected = (vm.selectedRadialSlotID == slot.id)
+                                HStack(spacing: 10) {
+                                    RadialSlotIconView(slot: slot, iconSize: 26)
+                                        .frame(width: 30, height: 30)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(slot.title)
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(LuminaTheme.textPrimary)
+                                            .lineLimit(1)
+                                        Text(slot.actionType == .launchApp ? (URL(fileURLWithPath: slot.appPath).deletingPathExtension().lastPathComponent) : "快捷键 \(slot.shortcut.displayString)")
+                                            .font(.system(size: 10.5))
+                                            .foregroundColor(LuminaTheme.textSecondary)
+                                            .lineLimit(1)
+                                    }
+
+                                    Spacer()
+
+                                    HStack(spacing: 3) {
+                                        Button(action: { settings.moveRadialSlot(at: idx, offset: -1) }) {
+                                            Image(systemName: "chevron.up")
+                                                .font(.system(size: 10, weight: .semibold))
+                                                .foregroundColor(idx == 0 ? LuminaTheme.textTertiary : LuminaTheme.textPrimary)
+                                                .frame(width: 22, height: 22)
+                                                .background(RoundedRectangle(cornerRadius: 5).fill(Color.black.opacity(0.05)))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .disabled(idx == 0)
+
+                                        Button(action: { settings.moveRadialSlot(at: idx, offset: 1) }) {
+                                            Image(systemName: "chevron.down")
+                                                .font(.system(size: 10, weight: .semibold))
+                                                .foregroundColor(idx == settings.radialSlots.count - 1 ? LuminaTheme.textTertiary : LuminaTheme.textPrimary)
+                                                .frame(width: 22, height: 22)
+                                                .background(RoundedRectangle(cornerRadius: 5).fill(Color.black.opacity(0.05)))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .disabled(idx == settings.radialSlots.count - 1)
+
+                                        Button(action: {
+                                            settings.deleteRadialSlot(id: slot.id)
+                                            if vm.selectedRadialSlotID == slot.id {
+                                                vm.selectedRadialSlotID = settings.radialSlots.first?.id
+                                            }
+                                        }) {
+                                            Image(systemName: "trash")
+                                                .font(.system(size: 10.5))
+                                                .foregroundColor(LuminaTheme.coral)
+                                                .frame(width: 22, height: 22)
+                                                .background(RoundedRectangle(cornerRadius: 5).fill(LuminaTheme.coral.opacity(0.10)))
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 11)
+                                        .fill(isSelected ? Color.white : Color.white.opacity(0.55))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 11)
+                                                .stroke(isSelected ? LuminaTheme.charcoalDark.opacity(0.55) : Color.black.opacity(0.05), lineWidth: isSelected ? 1.4 : 1)
+                                        )
+                                )
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    vm.selectedRadialSlotID = slot.id
+                                }
+                            }
+                        }
+                    }
+                }
+                .bentoCard()
+                .frame(width: 315)
+
+                // Right: Selected Slot Editor
+                VStack(alignment: .leading, spacing: 14) {
+                    if let selID = vm.selectedRadialSlotID,
+                       let currentSlot = settings.radialSlots.first(where: { $0.id == selID }) {
+                        HStack {
+                            Text("编辑槽位：\(currentSlot.title)")
+                                .font(.system(size: 15, weight: .semibold, design: .serif))
+                                .foregroundColor(LuminaTheme.textPrimary)
+                            Spacer()
+                            RadialSlotIconView(slot: currentSlot, iconSize: 28)
+                                .frame(width: 36, height: 36)
+                                .background(Circle().fill(Color.white).shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2))
+                        }
+
+                        labeledField("槽位名称") {
+                            TextField("输入名称", text: Binding(
+                                get: { currentSlot.title },
+                                set: { newTitle in
+                                    var updated = currentSlot
+                                    updated.title = newTitle
+                                    settings.updateRadialSlot(updated)
+                                }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+                        }
+
+                        labeledField("绑定动作类型") {
+                            Picker("", selection: Binding(
+                                get: { currentSlot.actionType },
+                                set: { newType in
+                                    var updated = currentSlot
+                                    updated.actionType = newType
+                                    if newType == .sendShortcut && updated.iconType == .appIcon {
+                                        updated.iconType = .sfSymbol
+                                    }
+                                    settings.updateRadialSlot(updated)
+                                }
+                            )) {
+                                ForEach(RadialActionType.allCases) { t in
+                                    Text(t.displayName).tag(t)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                        }
+
+                        if currentSlot.actionType == .launchApp {
+                            labeledField("目标应用程序") {
+                                HStack(spacing: 8) {
+                                    Text(currentSlot.appPath.isEmpty ? "尚未选择应用" : currentSlot.appPath)
+                                        .font(.system(size: 11.5, design: .monospaced))
+                                        .foregroundColor(LuminaTheme.textSecondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white))
+
+                                    Button("选择应用...") {
+                                        let panel = NSOpenPanel()
+                                        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+                                        panel.allowsMultipleSelection = false
+                                        panel.canChooseDirectories = false
+                                        panel.canChooseFiles = true
+                                        panel.allowedContentTypes = [.application]
+                                        if panel.runModal() == .OK, let url = panel.url {
+                                            var updated = currentSlot
+                                            updated.appPath = url.path
+                                            if updated.title == "新槽位" || updated.title.isEmpty {
+                                                updated.title = url.deletingPathExtension().lastPathComponent
+                                            }
+                                            updated.iconType = .appIcon
+                                            settings.updateRadialSlot(updated)
+                                        }
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+                            }
+                        } else {
+                            let isRecSlot = (vm.recordingTarget == .radialSlot(currentSlot.id))
+                            labeledField("模拟发送快捷键（直接发送给当前前台应用）") {
+                                HStack(spacing: 10) {
+                                    let slotRecText = vm.recordingPreviewModifiers.isEmpty
+                                        ? "请按下快捷键 (ESC 取消)..."
+                                        : "\(vm.recordingPreviewModifiers) + ..."
+                                    Text(isRecSlot ? slotRecText : currentSlot.shortcut.displayString)
+                                        .font(.system(size: 13.5, weight: .semibold, design: .monospaced))
+                                        .foregroundColor(isRecSlot ? LuminaTheme.coral : LuminaTheme.textPrimary)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 6)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .fill(Color.white)
+                                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(isRecSlot ? LuminaTheme.coral : Color.black.opacity(0.1), lineWidth: 1))
+                                        )
+                                    Button(isRecSlot ? "取消" : "录制快捷键") {
+                                        if isRecSlot {
+                                            vm.stopHotkeyRecording()
+                                        } else {
+                                            vm.startHotkeyRecording(target: .radialSlot(currentSlot.id))
+                                        }
+                                    }
+                                    .buttonStyle(.bordered)
+                                    Spacer()
+                                }
+                            }
+                        }
+
+                        Divider().opacity(0.25)
+
+                        labeledField("槽位图标来源") {
+                            Picker("", selection: Binding(
+                                get: { currentSlot.iconType },
+                                set: { newIconType in
+                                    var updated = currentSlot
+                                    updated.iconType = newIconType
+                                    settings.updateRadialSlot(updated)
+                                }
+                            )) {
+                                ForEach(RadialIconType.allCases) { t in
+                                    Text(t.displayName).tag(t)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                        }
+
+                        switch currentSlot.iconType {
+                        case .appIcon:
+                            Text("自动通过 macOS NSWorkspace 读取所选应用程序的原生高清图标。")
+                                .font(.system(size: 11.5))
+                                .foregroundColor(LuminaTheme.textSecondary)
+
+                        case .sfSymbol:
+                            VStack(alignment: .leading, spacing: 8) {
+                                TextField("输入 SF Symbol 名称，如 sparkle", text: Binding(
+                                    get: { currentSlot.symbolName },
+                                    set: { sym in
+                                        var updated = currentSlot
+                                        updated.symbolName = sym
+                                        settings.updateRadialSlot(updated)
+                                    }
+                                ))
+                                .textFieldStyle(.roundedBorder)
+
+                                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 8), spacing: 6) {
+                                    ForEach(curatedSymbols, id: \.self) { sym in
+                                        Button(action: {
+                                            var updated = currentSlot
+                                            updated.symbolName = sym
+                                            settings.updateRadialSlot(updated)
+                                        }) {
+                                            Image(systemName: sym)
+                                                .font(.system(size: 13))
+                                                .foregroundColor(currentSlot.symbolName == sym ? .white : LuminaTheme.textPrimary)
+                                                .frame(width: 32, height: 30)
+                                                .background(
+                                                    RoundedRectangle(cornerRadius: 7)
+                                                        .fill(currentSlot.symbolName == sym ? LuminaTheme.charcoalDark : Color.black.opacity(0.05))
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
+                        case .customImage:
+                            HStack(spacing: 10) {
+                                Button("上传本地图片...") {
+                                    let panel = NSOpenPanel()
+                                    panel.allowsMultipleSelection = false
+                                    panel.canChooseDirectories = false
+                                    panel.canChooseFiles = true
+                                    panel.allowedContentTypes = [.image]
+                                    if panel.runModal() == .OK, let url = panel.url {
+                                        if let fname = settings.saveCustomRadialIcon(from: url, for: currentSlot.id) {
+                                            var updated = currentSlot
+                                            updated.customIconFilename = fname
+                                            updated.iconType = .customImage
+                                            settings.updateRadialSlot(updated)
+                                            ToastHUD.shared.show("已更新自定义图标")
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                Text("支持 PNG / JPG / WebP / ICNS，自动缩放缓存为 128×128 轻量图标。")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(LuminaTheme.textSecondary)
+                            }
+                        }
+                    } else {
+                        Text("请在左侧选择一个槽位进行编辑，或点击「新增槽位」。")
+                            .font(.system(size: 13))
+                            .foregroundColor(LuminaTheme.textSecondary)
+                            .padding(.vertical, 40)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                }
+                .bentoCard()
+                .frame(maxWidth: .infinity)
+            }
         }
     }
 
