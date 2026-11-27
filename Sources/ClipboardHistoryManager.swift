@@ -527,6 +527,7 @@ final class ClipboardPanelController {
 
     private var panel: ClipboardFloatingPanel?
     private var vm: ClipboardPopupViewModel?
+    private var previousFrontmostApp: NSRunningApplication?
     private var globalClickMonitor: Any?
     private var localClickMonitor: Any?
     private var localKeyMonitor: Any?
@@ -543,6 +544,12 @@ final class ClipboardPanelController {
 
     func show() {
         dismiss()
+
+        // Remember the active foreground app so pinned mode can return keyboard focus before Cmd+V
+        if let front = NSWorkspace.shared.frontmostApplication,
+           front.bundleIdentifier != Bundle.main.bundleIdentifier {
+            previousFrontmostApp = front
+        }
 
         let viewModel = ClipboardPopupViewModel()
         self.vm = viewModel
@@ -579,9 +586,14 @@ final class ClipboardPanelController {
             store: ClipboardHistoryStore.shared,
             settings: SettingsStore.shared,
             onPaste: { [weak self] item, forcePlain in
-                let pinned = self?.vm?.isPinned ?? false
+                guard let self = self else { return }
+                let pinned = self.vm?.isPinned ?? false
                 if !pinned {
-                    self?.dismiss()
+                    self.dismiss()
+                } else {
+                    // Return keyboard focus to target app while keeping pinned panel floating on top
+                    self.previousFrontmostApp?.activate(options: [])
+                    self.panel?.orderFrontRegardless()
                 }
                 ClipboardHistoryStore.shared.pasteItem(item, forcePlainText: forcePlain)
             },
@@ -660,7 +672,12 @@ final class ClipboardPanelController {
                 if !filtered.isEmpty && vm.selectedIndex < filtered.count {
                     let item = filtered[vm.selectedIndex]
                     let pinned = vm.isPinned
-                    if !pinned { self.dismiss() }
+                    if !pinned {
+                        self.dismiss()
+                    } else {
+                        self.previousFrontmostApp?.activate(options: [])
+                        self.panel?.orderFrontRegardless()
+                    }
                     ClipboardHistoryStore.shared.pasteItem(item, forcePlainText: nil)
                 }
                 return nil
@@ -854,7 +871,7 @@ struct ClipboardPopupView: View {
             item.plainText.components(separatedBy: .newlines).count > 4 || item.plainText.count > 135
         )
         let altModeIsPlain = (settings.clipboardDefaultPasteMode == .richText)
-        let altModeLabel = altModeIsPlain ? "纯文本" : "富文本"
+        let altModeLabel = altModeIsPlain ? "粘贴为纯文本" : "粘贴为富文本"
 
         return ZStack(alignment: .topTrailing) {
             VStack(alignment: .leading, spacing: 6) {
