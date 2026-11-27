@@ -1611,9 +1611,6 @@ struct MainDashboardView: View {
                                 set: { newType in
                                     var updated = currentSlot
                                     updated.actionType = newType
-                                    if newType == .sendShortcut && updated.iconType == .appIcon {
-                                        updated.iconType = .sfSymbol
-                                    }
                                     settings.updateRadialSlot(updated)
                                 }
                             )) {
@@ -1709,9 +1706,48 @@ struct MainDashboardView: View {
 
                         switch currentSlot.iconType {
                         case .appIcon:
-                            Text("自动通过 macOS NSWorkspace 读取所选应用程序的原生高清图标。")
-                                .font(.system(size: 11.5))
-                                .foregroundColor(LuminaTheme.textSecondary)
+                            let resolvedPath = currentSlot.effectiveIconAppPath
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(spacing: 8) {
+                                    Text(resolvedPath.isEmpty ? "尚未选择图标来源应用" : URL(fileURLWithPath: resolvedPath).deletingPathExtension().lastPathComponent + "  (" + resolvedPath + ")")
+                                        .font(.system(size: 11.5, design: .monospaced))
+                                        .foregroundColor(LuminaTheme.textSecondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white))
+
+                                    Button("选择应用图标...") {
+                                        let panel = NSOpenPanel()
+                                        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+                                        panel.allowsMultipleSelection = false
+                                        panel.canChooseDirectories = false
+                                        panel.canChooseFiles = true
+                                        panel.allowedContentTypes = [.application]
+                                        if panel.runModal() == .OK, let url = panel.url {
+                                            var updated = currentSlot
+                                            updated.iconAppPath = url.path
+                                            updated.iconType = .appIcon
+                                            settings.updateRadialSlot(updated)
+                                        }
+                                    }
+                                    .buttonStyle(.bordered)
+
+                                    if currentSlot.actionType == .launchApp && !(currentSlot.iconAppPath ?? "").isEmpty {
+                                        Button("跟随目标应用") {
+                                            var updated = currentSlot
+                                            updated.iconAppPath = nil
+                                            settings.updateRadialSlot(updated)
+                                        }
+                                        .buttonStyle(.bordered)
+                                    }
+                                }
+                                Text("独立选择任意本地 App 提取高清原生图标，不影响「模拟快捷键」或「打开应用」的动作配置。")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(LuminaTheme.textSecondary)
+                            }
 
                         case .sfSymbol:
                             VStack(alignment: .leading, spacing: 8) {

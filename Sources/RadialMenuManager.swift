@@ -274,8 +274,9 @@ struct RadialSlotIconView: View {
     var body: some View {
         switch slot.iconType {
         case .appIcon:
-            if !slot.appPath.isEmpty && FileManager.default.fileExists(atPath: slot.appPath) {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: slot.appPath))
+            let iconPath = slot.effectiveIconAppPath
+            if !iconPath.isEmpty && FileManager.default.fileExists(atPath: iconPath) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: iconPath))
                     .resizable()
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fit)

@@ -130,10 +130,18 @@ struct RadialSlot: Codable, Equatable, Identifiable {
     var title: String
     var actionType: RadialActionType
     var appPath: String
+    var iconAppPath: String?
     var shortcut: HotkeyConfig
     var iconType: RadialIconType
     var symbolName: String
     var customIconFilename: String?
+
+    var effectiveIconAppPath: String {
+        if let custom = iconAppPath, !custom.isEmpty {
+            return custom
+        }
+        return appPath
+    }
 
     static var defaultSlots: [RadialSlot] {
         [
