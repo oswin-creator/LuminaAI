@@ -481,6 +481,20 @@ final class ClipboardPopupViewModel: ObservableObject {
     @Published var expandedItemIDs: Set<UUID> = []
     @Published var isPinned: Bool = false
 
+    /// Ephemeral preview cache (automatically freed when popup closes & vm deallocates)
+    private var richPreviewCache: [UUID: NSAttributedString] = [:]
+
+    func cachedRichPreview(for item: ClipboardHistoryItem, store: ClipboardHistoryStore) -> NSAttributedString? {
+        if let hit = richPreviewCache[item.id] {
+            return hit
+        }
+        if let loaded = store.loadClampedRichNSAttributedString(for: item) {
+            richPreviewCache[item.id] = loaded
+            return loaded
+        }
+        return nil
+    }
+
     func filteredItems(from all: [ClipboardHistoryItem]) -> [ClipboardHistoryItem] {
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return all.filter { item in
@@ -860,9 +874,11 @@ struct ClipboardPopupView: View {
                     }
 
                 case .richText:
-                    if let richNSAttr = store.loadClampedRichNSAttributedString(for: item) {
+                    if let richNSAttr = vm.cachedRichPreview(for: item, store: store) {
                         NativeRichTextPreview(attributedString: richNSAttr, maxLines: isExpanded ? 0 : 4)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .frame(maxHeight: (!isExpanded && needsFoldToggle) ? 82 : nil, alignment: .top)
+                            .clipped()
                     } else {
                         Text(item.plainText)
                             .font(.system(size: 13))
